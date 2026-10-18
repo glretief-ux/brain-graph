@@ -395,11 +395,14 @@ let NOTES = [];
 const chat = { history: [], busy: false };
 const STOP = new Set('the and for with what which who how are was were this that from have has about does did can you your our their them into out all any not but use used using show tell give list when where why more most there here its it is of in on to a an or as at by be'.split(' '));
 
-function retrieve(question) {
-  if (NOTES.length <= 25) return NOTES;                        // small vault: send everything
+const BOOSTS = [
+  { re: /to.?do|left|remaining|still|pending|next|outstanding|open/i, title: 'open items' },
+  { re: /rule|lesson|tip|gotcha|mistake|learn/i, title: 'lessons learned' }
+];
+function scoreNotes(question) {
   const words = question.toLowerCase().match(/[a-z0-9À-ɏ]{3,}/g) || [];
   const terms = words.filter((w) => !STOP.has(w));
-  const scored = NOTES.map((n) => {
+  return NOTES.map((n) => {
     const title = n.title.toLowerCase(), text = n.text.toLowerCase();
     let s = 0;
     for (const t of terms) {
@@ -407,9 +410,26 @@ function retrieve(question) {
       let at = text.indexOf(t), c = 0;
       while (at !== -1 && c < 5) { s += 1; c++; at = text.indexOf(t, at + t.length); }
     }
-    if (S.sel >= 0 && n.title === S.nodes[S.sel].title) s += 4;
+    for (const b of BOOSTS) if (b.re.test(question) && title === b.title) s += 6;
+    if (S.sel >= 0 && n.title === S.nodes[S.sel].title) s += 2;
     return { n, s };
   }).sort((a, b) => b.s - a.s);
+}
+function firstSentence(text) {
+  const t = text.replace(/^#.*$/m, '').replace(/What it is:\s*/i, '').replace(/\*\*/g, '').replace(/\[\[|\]\]/g, '').replace(/\s+/g, ' ').trim();
+  const m = t.match(/^(.{20,200}?[.!?])(\s|$)/);
+  return m ? m[1] : t.slice(0, 160);
+}
+// Free "search mode": no AI, just the best-matching notes with a one-line summary each.
+function localAnswer(question) {
+  const top = scoreNotes(question).filter((x) => x.s > 0).slice(0, 3);
+  if (!top.length) return 'No matching notes. Try different words, for example a project or tool name.';
+  return 'Best matches:\n' + top.map((x) => `• [[${x.n.title}]] ${firstSentence(x.n.text)}`).join('\n');
+}
+
+function retrieve(question) {
+  if (NOTES.length <= 25) return NOTES;                        // small vault: send everything
+  const scored = scoreNotes(question);
   const top = scored.slice(0, 12).filter((x) => x.s > 0).map((x) => x.n);
   // pull in direct neighbours of the best matches so related notes come along
   const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
@@ -455,6 +475,12 @@ function say(text) {
 async function ask(question) {
   if (chat.busy || !question) return;
   const box = $('#answer');
+  if (!CHAT_URL) {                                              // free search mode
+    const a = localAnswer(question);
+    renderAnswer(a);
+    say(a);
+    return;
+  }
   chat.busy = true;
   $('#askGo').disabled = true;
   box.replaceChildren(el('span', 'muted', 'Thinking…'));
@@ -482,9 +508,7 @@ async function ask(question) {
 function initChat() {
   const form = $('#askForm'), input = $('#askInput'), mic = $('#askMic');
   if (!CHAT_URL) {
-    $('#answer').replaceChildren(el('span', 'muted', 'Chat is not switched on yet. Add your Worker address to site/config.js (see README, "Chat setup").'));
-    input.disabled = true; $('#askGo').disabled = true; mic.disabled = true;
-    return;
+    input.placeholder = 'Search your notes… (free mode)';
   }
   fetch('notes.json', { cache: 'no-cache' }).then((r) => r.json()).then((d) => { NOTES = d; }).catch(() => {});
   form.addEventListener('submit', (e) => {

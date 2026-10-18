@@ -28,19 +28,21 @@ python scripts/build_graph.py vault site/graph.json
 cd site && python -m http.server 8000     # open http://localhost:8000
 ```
 
-## Chat setup ("Ask the brain")
-The chat sends your question plus the most relevant notes to Claude. The API key never goes in the page;
-it lives in a small Cloudflare Worker (`worker/worker.js`). Free Cloudflare plan is enough.
+## Chat ("Ask the brain")
+**Free search mode works out of the box:** type a question and it shows the best-matching notes with a one-line
+summary each. No account, no key, no cost.
 
-1. **API key:** console.anthropic.com -> API keys -> create one. Set a small monthly spend limit (for example $5).
-2. **Worker:** dash.cloudflare.com (free account) -> Workers & Pages -> Create -> Create Worker -> name it `brain-chat` -> Deploy -> Edit code.
-   Replace everything with the contents of `worker/worker.js` -> Deploy.
-3. **Secret:** Worker -> Settings -> Variables and Secrets -> Add -> type **Secret**, name `ANTHROPIC_API_KEY`, paste the key -> Deploy.
-4. **Connect:** copy the Worker address (`https://brain-chat.<you>.workers.dev`) into `site/config.js` as `chatUrl`, commit.
+**Optional: real answers (free).** Cloudflare Workers AI answers in full sentences from your notes, on Cloudflare's free tier.
+1. dash.cloudflare.com (free account) -> Workers & Pages -> Create -> Create Worker -> name it `brain-chat` -> Deploy -> Edit code.
+2. Replace everything with `worker/worker.js` from this repo -> Deploy.
+3. Worker -> Settings -> Bindings -> Add -> **Workers AI**, variable name `AI` -> Deploy.
+4. Put the Worker address (`https://brain-chat.<you>.workers.dev`) into `site/config.js` as `chatUrl`, commit.
 
-The Worker only answers requests coming from `https://glretief-ux.github.io`. To allow another site, add a Worker
-variable `ALLOWED_ORIGIN`. Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers aloud"
-use the browser's own speech features (microphone works best in Safari/Chrome).
+**Optional: Claude answers (paid API).** Instead of step 3, add a secret named `ANTHROPIC_API_KEY`
+(console.anthropic.com -> API keys; set a small spend limit). If both are present, Claude is used.
+
+The Worker only answers requests from `https://glretief-ux.github.io` (add `ALLOWED_ORIGIN` to allow others).
+Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers aloud" use the browser's own speech features.
 
 ## Controls
 | Action | Touch | Mouse |
