@@ -3,7 +3,7 @@
 **What it is:** this project, an interactive graph of markdown notes that runs on iPad. Live at https://glretief-ux.github.io/brain-graph/ (repo glretief-ux/brain-graph on [[GitHub]]). Built with [[Claude Code]]. Entry point: [[Start Here]].
 
 ## How it works
-- Notes live in the vault/ folder; each [[link]] becomes a line in the graph and the folder sets the type and colour.
+- Notes live in the vault/ folder; each double-bracket link becomes a line in the graph and the folder sets the type and colour.
 - A GitHub Action rebuilds the graph on every push ([[GitHub Pages Workflow]]).
 - "Ask the brain" chat sends your question plus the most relevant notes to Claude through a small Cloudflare Worker that holds the API key.
 
