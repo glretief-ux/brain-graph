@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Brain">
+<meta name="theme-color" content="#07090d">
+<title>Brain Graph</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="bar">
+  <button id="btnPanel" title="Panel" aria-label="Toggle panel">☰</button>
+  <button id="btnFit" title="Fit all">Fit</button>
+  <button id="btnPath" title="Path mode: tap two notes to trace the route" aria-pressed="false">Path</button>
+</div>
+
+<aside id="panel">
+  <header>
+    <h1>Brain Graph</h1>
+    <div id="stats">loading…</div>
+  </header>
+
+  <input id="search" type="search" placeholder="Search the brain…" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div id="results"></div>
+
+  <section>
+    <h2>Inspector</h2>
+    <div id="inspector"></div>
+  </section>
+
+  <section>
+    <h2>Top hubs</h2>
+    <div id="hubs"></div>
+  </section>
+
+  <section>
+    <h2>Filter</h2>
+    <div id="filters"></div>
+  </section>
+
+  <section>
+    <h2>Forces</h2>
+    <label>Repel <input id="repel" type="range" min="60" max="1200" value="300"></label>
+    <label>Link length <input id="linklen" type="range" min="15" max="150" value="45"></label>
+  </section>
+</aside>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
