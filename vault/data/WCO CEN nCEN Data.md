@@ -1,3 +1,9 @@
 # WCO CEN nCEN Data
 
-Seizure case exports from the WCO Customs Enforcement Network (operation CONTAINERcomm 3). Analysed in [[CEN Seizure Analysis]], scored with [[Risk Scoring]], stored in a private [[GitHub]] repo, summarised monthly in [[CEN Monthly Bulletin]]. [[Seizure Watch]] compares its open-source findings against it.
+**What it is:** seizure case exports from the WCO Customs Enforcement Network.
+
+## How it is handled
+- Analysed in [[CEN Seizure Analysis]] and scored with [[Risk Scoring]].
+- Stored only in a private [[GitHub]] repo; no case data belongs in this vault.
+- Summarised monthly in the [[CEN Monthly Bulletin]].
+- [[Seizure Watch]] compares its open-source findings against it.

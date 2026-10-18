@@ -1,5 +1,16 @@
 # Brain Graph
 
-This project: an interactive graph of markdown notes that runs on iPad, published with the [[GitHub Pages Workflow]] from the brain-graph repo on [[GitHub]], built with [[Claude Code]]. The notes you are looking at are its content. Entry point: [[Start Here]].
+**What it is:** this project, an interactive graph of markdown notes that runs on iPad. Live at https://glretief-ux.github.io/brain-graph/ (repo glretief-ux/brain-graph on [[GitHub]]). Built with [[Claude Code]]. Entry point: [[Start Here]].
 
-Possible next step: a J.A.R.V.I.S.-style chat and voice layer.
+## How it works
+- Notes live in the vault/ folder; each [[link]] becomes a line in the graph and the folder sets the type and colour.
+- A GitHub Action rebuilds the graph on every push ([[GitHub Pages Workflow]]).
+- "Ask the brain" chat sends your question plus the most relevant notes to Claude through a small Cloudflare Worker that holds the API key.
+
+## Decisions
+- Runs entirely in Safari so it works on iPad.
+- The repo is public, so notes here must not contain sensitive operational detail ([[Lessons Learned]]).
+
+## Open items
+- Create the Cloudflare Worker, add the API key and connect the chat.
+- Keep adding notes as projects change ([[Open Items]]).

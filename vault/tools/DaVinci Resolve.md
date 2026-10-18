@@ -1,3 +1,10 @@
 # DaVinci Resolve
 
-Video editor used for [[Whisky Lovers Society]]: paid version on iPad (version 21), plus the free MCP add-on route for [[Claude Code]] on the Windows PC.
+**What it is:** the video editor for [[Whisky Lovers Society]].
+
+## Setup
+- Paid version on iPad (version 21), where most editing happens.
+- Windows PC: Claude Code with a free Resolve MCP bridge so Claude can edit there ([[Claude Code]]).
+
+## Standing look
+Colour graded, colourful motion graphics from [[Remotion]], something on screen at least every 10 seconds, b-roll and photos.
