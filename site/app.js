@@ -526,7 +526,16 @@ function initChat() {
     rec.interimResults = false;
     mic.classList.add('on');
     rec.onresult = (ev) => { const t = ev.results[0][0].transcript; input.value = ''; ask(t); };
-    rec.onerror = () => toast('Voice input is not available here');
+    rec.onerror = (ev) => {
+      const hints = {
+        'not-allowed': 'Microphone blocked. Safari: aA menu, Website Settings, Microphone, Allow',
+        'service-not-allowed': 'Turn on Dictation: Settings, General, Keyboard, Enable Dictation',
+        'no-speech': 'Did not hear anything, try again',
+        'audio-capture': 'No microphone found',
+        'network': 'Speech service needs internet'
+      };
+      toast(hints[ev.error] || ('Voice input failed: ' + (ev.error || 'unknown') + '. Tip: use the keyboard mic key instead'));
+    };
     rec.onend = () => mic.classList.remove('on');
     try { rec.start(); } catch (e) { mic.classList.remove('on'); }
   });
