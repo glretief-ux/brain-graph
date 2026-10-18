@@ -27,6 +27,8 @@ jobs:
           python-version: "3.12"
       - name: Build graph.json from the vault
         run: python scripts/build_graph.py vault site/graph.json
+      - name: Cache-bust scripts and styles so Safari always loads the newest files
+        run: sed -i "s/?v=[0-9a-zA-Z]*/?v=${GITHUB_SHA::7}/g" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
