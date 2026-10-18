@@ -28,6 +28,20 @@ python scripts/build_graph.py vault site/graph.json
 cd site && python -m http.server 8000     # open http://localhost:8000
 ```
 
+## Chat setup ("Ask the brain")
+The chat sends your question plus the most relevant notes to Claude. The API key never goes in the page;
+it lives in a small Cloudflare Worker (`worker/worker.js`). Free Cloudflare plan is enough.
+
+1. **API key:** console.anthropic.com -> API keys -> create one. Set a small monthly spend limit (for example $5).
+2. **Worker:** dash.cloudflare.com (free account) -> Workers & Pages -> Create -> Create Worker -> name it `brain-chat` -> Deploy -> Edit code.
+   Replace everything with the contents of `worker/worker.js` -> Deploy.
+3. **Secret:** Worker -> Settings -> Variables and Secrets -> Add -> type **Secret**, name `ANTHROPIC_API_KEY`, paste the key -> Deploy.
+4. **Connect:** copy the Worker address (`https://brain-chat.<you>.workers.dev`) into `site/config.js` as `chatUrl`, commit.
+
+The Worker only answers requests coming from `https://glretief-ux.github.io`. To allow another site, add a Worker
+variable `ALLOWED_ORIGIN`. Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers aloud"
+use the browser's own speech features (microphone works best in Safari/Chrome).
+
 ## Controls
 | Action | Touch | Mouse |
 |---|---|---|

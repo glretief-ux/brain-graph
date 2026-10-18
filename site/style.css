@@ -77,6 +77,28 @@ section h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: .12em; text-trans
 label { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; margin: 8px 0; }
 input[type=range] { flex: 1; max-width: 170px; accent-color: var(--accent); height: 28px; }
 
+#answer { white-space: pre-wrap; font-size: 14px; margin-bottom: 8px; max-height: 38vh; overflow-y: auto; }
+#answer:empty { display: none; }
+#answer .muted { color: var(--muted); }
+#answer .err { color: #fca5a5; }
+#answer button {
+  font: inherit; font-size: 13px; color: var(--accent); background: rgba(74, 222, 128, .12);
+  border: 1px solid rgba(74, 222, 128, .35); border-radius: 999px; padding: 1px 9px; cursor: pointer;
+}
+#askForm { display: flex; gap: 6px; }
+#askInput {
+  flex: 1; min-width: 0; height: 44px; padding: 0 12px; border-radius: 10px; font: inherit; font-size: 16px;
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line); color: var(--text);
+}
+#askForm button {
+  height: 44px; min-width: 44px; padding: 0 12px; border-radius: 10px; font: inherit; color: var(--text);
+  background: rgba(255, 255, 255, .08); border: 1px solid var(--line); cursor: pointer;
+}
+#askGo { background: var(--accent) !important; color: #04130a !important; font-weight: 600; border-color: var(--accent) !important; }
+#askForm button:disabled, #askInput:disabled { opacity: .45; }
+#askMic.on { background: #ef4444 !important; }
+label.inline { justify-content: flex-start; margin: 8px 0 0; font-size: 12px; }
+
 #toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);
   background: var(--panel); border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px;

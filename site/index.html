@@ -28,6 +28,17 @@
   <input id="search" type="search" placeholder="Search the brain…" autocomplete="off" autocapitalize="off" spellcheck="false">
   <div id="results"></div>
 
+  <section id="ask">
+    <h2>Ask the brain</h2>
+    <div id="answer"></div>
+    <form id="askForm">
+      <input id="askInput" type="text" placeholder="Ask about your projects…" enterkeyhint="send" autocomplete="off">
+      <button type="submit" id="askGo">Ask</button>
+      <button type="button" id="askMic" title="Speak">🎤</button>
+    </form>
+    <label class="inline"><input type="checkbox" id="speak"> Read answers aloud</label>
+  </section>
+
   <section>
     <h2>Inspector</h2>
     <div id="inspector"></div>
@@ -51,6 +62,7 @@
 </aside>
 
 <div id="toast"></div>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -19,7 +19,7 @@ function colorFor(t) {
 
 const S = {
   nodes: [], links: [], adj: [], vis: [], hidden: new Set(),
-  sel: -1, nb: new Set(), path: null, pathSet: new Set(), pathEdges: new Set(),
+  sel: -1, cited: new Set(), nb: new Set(), path: null, pathSet: new Set(), pathEdges: new Set(),
   pathMode: false, view: { x: 0, y: 0, k: 1 }, target: null,
   alpha: 1, repel: 300, linkLen: 45, dirty: true, W: 0, H: 0, dpr: 1
 };
@@ -194,6 +194,12 @@ function draw() {
       ctx.lineWidth = 2 / k;
       ctx.strokeStyle = S.pathSet.has(n.i) ? '#facc15' : '#fff';
       ctx.stroke();
+    } else if (S.cited.has(n.i)) {
+      ctx.lineWidth = 2.5 / k;
+      ctx.strokeStyle = '#4ade80';
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r + 4 / k, 0, 6.2832);
+      ctx.stroke();
     }
   }
   ctx.globalAlpha = 1;
@@ -207,7 +213,7 @@ function draw() {
   ctx.lineWidth = 3 / k;
   ctx.strokeStyle = 'rgba(7,9,13,0.9)';
   for (const n of S.vis) {
-    const special = n.i === S.sel || S.pathSet.has(n.i) || (focus && S.nb.has(n.i));
+    const special = n.i === S.sel || S.pathSet.has(n.i) || S.cited.has(n.i) || (focus && S.nb.has(n.i));
     if (!special && (focus || n.rank >= count)) continue;
     ctx.fillStyle = special ? '#fff' : 'rgba(230,233,239,0.85)';
     const ty = n.y + n.r + 2 / k;
@@ -383,6 +389,125 @@ $('#search').addEventListener('input', (e) => {
     });
 });
 
+/* ---------- ask the brain (chat) ---------- */
+const CHAT_URL = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.chatUrl) || '';
+let NOTES = [];
+const chat = { history: [], busy: false };
+const STOP = new Set('the and for with what which who how are was were this that from have has about does did can you your our their them into out all any not but use used using show tell give list when where why more most there here its it is of in on to a an or as at by be'.split(' '));
+
+function retrieve(question) {
+  if (NOTES.length <= 25) return NOTES;                        // small vault: send everything
+  const words = question.toLowerCase().match(/[a-z0-9À-ɏ]{3,}/g) || [];
+  const terms = words.filter((w) => !STOP.has(w));
+  const scored = NOTES.map((n) => {
+    const title = n.title.toLowerCase(), text = n.text.toLowerCase();
+    let s = 0;
+    for (const t of terms) {
+      if (title.includes(t)) s += 5;
+      let at = text.indexOf(t), c = 0;
+      while (at !== -1 && c < 5) { s += 1; c++; at = text.indexOf(t, at + t.length); }
+    }
+    if (S.sel >= 0 && n.title === S.nodes[S.sel].title) s += 4;
+    return { n, s };
+  }).sort((a, b) => b.s - a.s);
+  const top = scored.slice(0, 12).filter((x) => x.s > 0).map((x) => x.n);
+  // pull in direct neighbours of the best matches so related notes come along
+  const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
+  const seen = new Set(top.map((n) => n.title));
+  for (const t of top.slice(0, 3)) {
+    const node = byTitle.get(t.title.toLowerCase());
+    if (!node) continue;
+    for (const j of S.adj[node.i]) {
+      const nt = NOTES.find((n) => n.title === S.nodes[j].title);
+      if (nt && !seen.has(nt.title) && top.length < 22) { top.push(nt); seen.add(nt.title); }
+    }
+  }
+  return top.length ? top : NOTES.slice(0, 20);
+}
+
+function renderAnswer(text) {
+  const box = $('#answer');
+  box.replaceChildren();
+  const cited = new Set();
+  const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
+  text.split(/(\[\[[^\]]+\]\])/g).forEach((part) => {
+    const m = part.match(/^\[\[([^\]]+)\]\]$/);
+    if (!m) { box.append(document.createTextNode(part)); return; }
+    const node = byTitle.get(m[1].trim().toLowerCase());
+    if (!node) { box.append(document.createTextNode(m[1])); return; }
+    cited.add(node.i);
+    const b = el('button', null, node.title);
+    b.type = 'button';
+    b.onclick = () => select(node.i, true);
+    box.append(b);
+  });
+  S.cited = cited;
+  S.dirty = true;
+}
+
+function say(text) {
+  if (!$('#speak').checked || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/\[\[|\]\]/g, ''));
+  speechSynthesis.speak(u);
+}
+
+async function ask(question) {
+  if (chat.busy || !question) return;
+  const box = $('#answer');
+  chat.busy = true;
+  $('#askGo').disabled = true;
+  box.replaceChildren(el('span', 'muted', 'Thinking…'));
+  S.cited = new Set();
+  try {
+    const r = await fetch(CHAT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, notes: retrieve(question), history: chat.history })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
+    chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
+    chat.history = chat.history.slice(-6);
+    renderAnswer(data.answer);
+    say(data.answer);
+  } catch (e) {
+    box.replaceChildren(el('span', 'err', 'Could not get an answer: ' + e.message));
+  } finally {
+    chat.busy = false;
+    $('#askGo').disabled = false;
+  }
+}
+
+function initChat() {
+  const form = $('#askForm'), input = $('#askInput'), mic = $('#askMic');
+  if (!CHAT_URL) {
+    $('#answer').replaceChildren(el('span', 'muted', 'Chat is not switched on yet. Add your Worker address to site/config.js (see README, "Chat setup").'));
+    input.disabled = true; $('#askGo').disabled = true; mic.disabled = true;
+    return;
+  }
+  fetch('notes.json', { cache: 'no-cache' }).then((r) => r.json()).then((d) => { NOTES = d; }).catch(() => {});
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    input.value = '';
+    input.blur();
+    ask(q);
+  });
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { mic.style.display = 'none'; return; }
+  mic.addEventListener('click', () => {
+    const rec = new SR();
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = false;
+    mic.classList.add('on');
+    rec.onresult = (ev) => { const t = ev.results[0][0].transcript; input.value = ''; ask(t); };
+    rec.onerror = () => toast('Voice input is not available here');
+    rec.onend = () => mic.classList.remove('on');
+    try { rec.start(); } catch (e) { mic.classList.remove('on'); }
+  });
+}
+
 /* ---------- controls ---------- */
 $('#btnFit').onclick = () => fit(false);
 $('#btnPanel').onclick = () => { panel.classList.toggle('closed'); };
@@ -469,6 +594,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 /* ---------- boot ---------- */
 if (isMobile()) panel.classList.add('closed');
 resize();
+initChat();
 fetch('graph.json', { cache: 'no-cache' })
   .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
   .then(init)
