@@ -529,27 +529,53 @@ const voiceBox = (() => {
   let busyAI = false, unlocked = false, aiDown = false, token = 0;
   // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
   const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-  const unlock = () => { if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {} };
+  const unlock = () => {
+    const c = getCtx(); if (c) { try { c.resume(); const b = c.createBuffer(1, 1, 22050), n = c.createBufferSource(); n.buffer = b; n.connect(c.destination); n.start(0); } catch (e) {} }
+    if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {}
+  };
   const aiOn = () => !!CHAT_URL && !aiDown && sel() && sel().value === AI;
-  const stop = () => { token++; try { player.pause(); } catch (e) {} busyAI = false; };
+  const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
+  let engine = 'aura', actx = null, node = null;
+  const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
+  const fetchSpeech = async (text, eng) => {
+    const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speak: text, speaker: AI_SPEAKER, engine: eng }) });
+    if (!r.ok) { let m = ''; try { m = (await r.json()).error || ''; } catch (e) {} throw new Error(m || ('speech ' + r.status)); }
+    const blob = await r.blob();
+    if (!blob.size) throw new Error('empty audio');
+    return blob;
+  };
+  // Play with <audio>; if iOS refuses, play the same bytes through the Web Audio context that was unlocked by a tap
+  const playBlob = async (blob, my, onend) => {
+    const done = () => { if (my === token) { busyAI = false; onend(); } };
+    const url = URL.createObjectURL(blob);
+    player.onended = () => { URL.revokeObjectURL(url); done(); };
+    player.onerror = () => {};
+    player.src = url;
+    try { await player.play(); return; } catch (e) {}
+    const ctx = getCtx();
+    if (!ctx) throw new Error('audio blocked');
+    try { await ctx.resume(); } catch (e) {}
+    const ab = await blob.arrayBuffer();
+    const buf = await new Promise((res, rej) => { const p = ctx.decodeAudioData(ab, res, rej); if (p && p.catch) p.catch(rej); });
+    node = ctx.createBufferSource(); node.buffer = buf; node.connect(ctx.destination);
+    node.onended = done; node.start();
+  };
   const speakAI = async (text, onstart, onend, onfail) => {
     const my = ++token; busyAI = true;
+    const attempt = async (eng) => { const blob = await fetchSpeech(text, eng); if (my !== token) return false; await playBlob(blob, my, onend); return true; };
     try {
-      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speak: text, speaker: AI_SPEAKER }) });
-      if (!r.ok) throw new Error('speech ' + r.status);
-      const blob = await r.blob();
-      if (my !== token) return;
-      if (!blob.size) throw new Error('empty audio');
-      const url = URL.createObjectURL(blob);
-      player.onended = player.onerror = () => { URL.revokeObjectURL(url); if (my === token) { busyAI = false; onend(); } };
-      player.src = url;
-      await player.play();
-      if (my === token) onstart();
+      let ok;
+      try { ok = await attempt(engine); }
+      catch (e) {
+        if (engine === 'melo' || my !== token) throw e;
+        engine = 'melo';                                      // main voice out of free allowance or failing: use the cheap one
+        ok = await attempt('melo');
+      }
+      if (ok && my === token) onstart();
     } catch (e) {
       if (my !== token) return;
-      busyAI = false;
-      aiDown = true;                                      // daily free limit or an error: use the iPad voice from now on
-      toast('AI voice unavailable, using the iPad voice');
+      busyAI = false; aiDown = true;
+      toast('AI voice failed (' + (e && e.message ? e.message : 'error') + '), using the iPad voice');
       onfail();
     }
   };
