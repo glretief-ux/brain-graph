@@ -25,6 +25,9 @@ const S = {
 };
 
 const isMobile = () => window.innerWidth < 760;
+// 3D camera: yaw/pitch rotate the cloud, f is the perspective distance. S.flat = classic 2D view.
+const cam = { yaw: 0.6, pitch: -0.3, f: 700, last: 0, m: { cy: 1, sy: 0, cp: 1, sp: 0 } };
+S.flat = false;
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -70,7 +73,7 @@ function usable() {
 /* ---------- data ---------- */
 function init(g) {
   S.nodes = g.nodes.map((n, i) => ({
-    ...n, i, x: (Math.random() - 0.5) * 400, y: (Math.random() - 0.5) * 400, vx: 0, vy: 0,
+    ...n, i, x: (Math.random() - 0.5) * 400, y: (Math.random() - 0.5) * 400, z: (Math.random() - 0.5) * 400, vx: 0, vy: 0, vz: 0,
     r: 3 + Math.sqrt(n.degree) * 1.8, color: colorFor(n.type), pinned: false
   }));
   S.adj = S.nodes.map(() => []);
@@ -108,30 +111,33 @@ function tick() {
     const p = V[i];
     for (let j = i + 1; j < V.length; j++) {
       const q = V[j];
-      let dx = q.x - p.x, dy = q.y - p.y, d2 = dx * dx + dy * dy;
+      let dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z, d2 = dx * dx + dy * dy + dz * dz;
       if (d2 > 160000) continue;
-      if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+      if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; dz = Math.random() - 0.5; d2 = 1; }
       const f = (rep * a) / d2;
-      p.vx -= dx * f; p.vy -= dy * f;
-      q.vx += dx * f; q.vy += dy * f;
+      p.vx -= dx * f; p.vy -= dy * f; p.vz -= dz * f;
+      q.vx += dx * f; q.vy += dy * f; q.vz += dz * f;
     }
   }
   for (const l of S.links) {
     const p = S.nodes[l.a], q = S.nodes[l.b];
     if (S.hidden.has(p.type) || S.hidden.has(q.type)) continue;
-    const dx = q.x - p.x, dy = q.y - p.y;
-    const d = Math.hypot(dx, dy) || 1;
+    const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+    const d = Math.hypot(dx, dy, dz) || 1;
     const f = ((d - S.linkLen) / d) * 0.25 * a / Math.min(p.degree, q.degree, 8);
-    p.vx += dx * f; p.vy += dy * f;
-    q.vx -= dx * f; q.vy -= dy * f;
+    p.vx += dx * f; p.vy += dy * f; p.vz += dz * f;
+    q.vx -= dx * f; q.vy -= dy * f; q.vz -= dz * f;
   }
+  const gz = S.flat ? 0.25 : 0.012;                       // flat mode squeezes the cloud back to 2D
   for (const n of V) {
     n.vx -= n.x * 0.012 * a;
     n.vy -= n.y * 0.012 * a;
-    n.vx *= 0.6; n.vy *= 0.6;
-    if (n.pinned) { n.vx = n.vy = 0; continue; }
+    n.vz -= n.z * gz * a;
+    n.vx *= 0.6; n.vy *= 0.6; n.vz *= 0.6;
+    if (n.pinned) { n.vx = n.vy = n.vz = 0; continue; }
     n.x += Math.max(-30, Math.min(30, n.vx));
     n.y += Math.max(-30, Math.min(30, n.vy));
+    n.z += Math.max(-30, Math.min(30, n.vz));
   }
   S.alpha *= 0.992;
 }
@@ -142,84 +148,121 @@ function labelCount(k) {
   const f = k < 0.6 ? 0.05 : k < 1 ? 0.14 : k < 1.5 ? 0.32 : k < 2.2 ? 0.65 : 1;
   return Math.ceil(S.vis.length * f);
 }
+function project() {
+  const yaw = S.flat ? 0 : cam.yaw, pit = S.flat ? 0 : cam.pitch;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pit), sp = Math.sin(pit);
+  cam.m = { cy, sy, cp, sp };
+  const { x: vx, y: vy, k } = S.view;
+  for (const n of S.nodes) {
+    const x1 = n.x * cy + n.z * sy, z1 = -n.x * sy + n.z * cy;
+    const y2 = n.y * cp - z1 * sp, z2 = n.y * sp + z1 * cp;
+    const ps = S.flat ? 1 : cam.f / (cam.f + Math.max(z2, -cam.f * 0.85));
+    n.px = x1; n.py = y2; n.pz = z2; n.ps = ps;
+    n.sx = vx + x1 * ps * k; n.sy = vy + y2 * ps * k;
+  }
+}
 function draw() {
-  const { x, y, k } = S.view;
+  const k = S.view.k;
   ctx.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   ctx.clearRect(0, 0, S.W, S.H);
-  ctx.translate(x, y);
-  ctx.scale(k, k);
+  project();
+  const V = S.vis, flat = S.flat;
+  let zmin = 1e9, zmax = -1e9;
+  for (const n of V) { zmin = Math.min(zmin, n.pz); zmax = Math.max(zmax, n.pz); }
+  const span = Math.max(zmax - zmin, 1);
+  const near = (z) => (flat ? 1 : 1 - (z - zmin) / span);                 // 1 = closest to you, 0 = farthest
+  const fog = (z) => (flat ? 1 : 0.3 + 0.7 * near(z));
 
   const focus = S.sel >= 0;
-  // edges
-  ctx.lineWidth = 1 / k;
-  ctx.strokeStyle = focus ? 'rgba(130,170,160,0.05)' : 'rgba(130,170,160,0.16)';
-  ctx.beginPath();
+  // edges, batched into 4 depth bands so far links fade
+  const base = focus ? 0.05 : 0.2;
+  const bands = [[], [], [], []];
   for (const l of S.links) {
     if (hiddenNode(l.a) || hiddenNode(l.b)) continue;
     const p = S.nodes[l.a], q = S.nodes[l.b];
-    ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+    const b = Math.min(3, Math.floor(near((p.pz + q.pz) / 2) * 4));
+    bands[b].push(p, q);
   }
-  ctx.stroke();
-  if (focus) {
-    ctx.lineWidth = 1.4 / k;
-    ctx.strokeStyle = 'rgba(180,230,210,0.55)';
+  ctx.lineWidth = 1;
+  bands.forEach((arr, b) => {
+    if (!arr.length) return;
+    ctx.strokeStyle = `rgba(130,170,160,${flat ? base * 0.8 : base * (0.35 + 0.65 * (b + 1) / 4)})`;
     ctx.beginPath();
+    for (let i = 0; i < arr.length; i += 2) { ctx.moveTo(arr[i].sx, arr[i].sy); ctx.lineTo(arr[i + 1].sx, arr[i + 1].sy); }
+    ctx.stroke();
+  });
+  if (focus) {
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(180,230,210,0.6)';
+    ctx.beginPath();
+    const p = S.nodes[S.sel];
     for (const j of S.adj[S.sel]) {
       if (hiddenNode(j)) continue;
-      const p = S.nodes[S.sel], q = S.nodes[j];
-      ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+      const q = S.nodes[j];
+      ctx.moveTo(p.sx, p.sy); ctx.lineTo(q.sx, q.sy);
     }
     ctx.stroke();
   }
   if (S.path) {
-    ctx.lineWidth = 3 / k;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = '#facc15';
     ctx.beginPath();
     for (let i = 0; i < S.path.length - 1; i++) {
       const p = S.nodes[S.path[i]], q = S.nodes[S.path[i + 1]];
-      ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+      ctx.moveTo(p.sx, p.sy); ctx.lineTo(q.sx, q.sy);
     }
     ctx.stroke();
   }
 
-  // nodes
-  for (const n of S.vis) {
+  // nodes, far to near so closer spheres cover the ones behind
+  const order = [...V].sort((a, b) => b.pz - a.pz);
+  for (const n of order) {
     const lit = !focus || n.i === S.sel || S.nb.has(n.i) || S.pathSet.has(n.i);
-    ctx.globalAlpha = lit ? 1 : 0.18;
+    const R = Math.max(1.5, n.r * n.ps * k);
+    ctx.globalAlpha = (lit ? 1 : 0.18) * fog(n.pz);
     ctx.fillStyle = n.color;
     ctx.beginPath();
-    ctx.arc(n.x, n.y, n.r, 0, 6.2832);
+    ctx.arc(n.sx, n.sy, R, 0, 6.2832);
     ctx.fill();
+    if (!flat && R > 3) {                                   // sphere shading
+      const gr = ctx.createRadialGradient(n.sx - R * 0.35, n.sy - R * 0.35, R * 0.08, n.sx, n.sy, R);
+      gr.addColorStop(0, 'rgba(255,255,255,0.55)');
+      gr.addColorStop(0.45, 'rgba(255,255,255,0)');
+      gr.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, 6.2832); ctx.fill();
+    }
     if (n.i === S.sel || S.pathSet.has(n.i)) {
-      ctx.lineWidth = 2 / k;
+      ctx.lineWidth = 2;
       ctx.strokeStyle = S.pathSet.has(n.i) ? '#facc15' : '#fff';
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, 6.2832); ctx.stroke();
     } else if (S.cited.has(n.i)) {
-      ctx.lineWidth = 2.5 / k;
+      ctx.lineWidth = 2.5;
       ctx.strokeStyle = '#4ade80';
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.r + 4 / k, 0, 6.2832);
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 4, 0, 6.2832); ctx.stroke();
     }
   }
   ctx.globalAlpha = 1;
 
   // labels
   const count = labelCount(k);
-  ctx.font = `${12 / k}px -apple-system, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 3 / k;
+  ctx.lineWidth = 3;
   ctx.strokeStyle = 'rgba(7,9,13,0.9)';
-  for (const n of S.vis) {
+  for (const n of order.slice().reverse()) {                 // near first
     const special = n.i === S.sel || S.pathSet.has(n.i) || S.cited.has(n.i) || (focus && S.nb.has(n.i));
     if (!special && (focus || n.rank >= count)) continue;
-    ctx.fillStyle = special ? '#fff' : 'rgba(230,233,239,0.85)';
-    const ty = n.y + n.r + 2 / k;
-    ctx.strokeText(n.title, n.x, ty);
-    ctx.fillText(n.title, n.x, ty);
+    if (!special && !flat && near(n.pz) < 0.25) continue;     // skip labels on the far side
+    ctx.font = `${Math.round(12 * (flat ? 1 : Math.min(1.15, Math.max(0.8, n.ps))))}px -apple-system, system-ui, sans-serif`;
+    ctx.globalAlpha = special ? 1 : fog(n.pz);
+    ctx.fillStyle = special ? '#fff' : 'rgba(230,233,239,0.9)';
+    const ty = n.sy + Math.max(1.5, n.r * n.ps * k) + 2;
+    ctx.strokeText(n.title, n.sx, ty);
+    ctx.fillText(n.title, n.sx, ty);
   }
+  ctx.globalAlpha = 1;
 }
 
 function animate() {
@@ -235,6 +278,8 @@ function animate() {
 function frame() {
   const moving = S.alpha > 0.003;
   if (moving) { tick(); S.dirty = true; }
+  // slow idle spin: only in 3D, with nothing selected and nobody touching the graph
+  if (!S.flat && S.sel < 0 && !g && !S.target && performance.now() - cam.last > 2500) { cam.yaw += 0.0022; S.dirty = true; }
   animate();
   if (S.dirty) { draw(); S.dirty = false; }
   requestAnimationFrame(frame);
@@ -243,9 +288,11 @@ function frame() {
 /* ---------- view helpers ---------- */
 function fit(instant) {
   if (!S.vis.length) return;
+  project();
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (const n of S.vis) {
-    x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y);
+    const X = n.px * n.ps, Y = n.py * n.ps;
+    x0 = Math.min(x0, X); y0 = Math.min(y0, Y); x1 = Math.max(x1, X); y1 = Math.max(y1, Y);
   }
   const u = usable(), pad = 40;
   const w = Math.max(x1 - x0, 60), h = Math.max(y1 - y0, 60);
@@ -258,16 +305,17 @@ function fit(instant) {
   if (instant) { Object.assign(S.view, t); S.target = null; S.dirty = true; } else S.target = t;
 }
 function centerOn(i) {
+  project();
   const n = S.nodes[i], u = usable();
   const k = Math.max(S.view.k, 0.9);
-  S.target = { k, x: (u.x0 + u.x1) / 2 - n.x * k, y: (u.y0 + u.y1) / 2 - n.y * k };
+  S.target = { k, x: (u.x0 + u.x1) / 2 - n.px * n.ps * k, y: (u.y0 + u.y1) / 2 - n.py * n.ps * k };
 }
 function pick(sx, sy) {
-  const wx = (sx - S.view.x) / S.view.k, wy = (sy - S.view.y) / S.view.k;
-  let best = -1, bd = 1e9;
+  project();
+  let best = -1, bz = 1e9;
   for (const n of S.vis) {
-    const d = Math.hypot(n.x - wx, n.y - wy);
-    if (d < n.r + 12 / S.view.k && d < bd) { bd = d; best = n.i; }
+    const d = Math.hypot(n.sx - sx, n.sy - sy);
+    if (d < Math.max(1.5, n.r * n.ps * S.view.k) + 12 && n.pz < bz) { bz = n.pz; best = n.i; }
   }
   return best;
 }
@@ -822,6 +870,14 @@ const convo = (() => {
 /* ---------- controls ---------- */
 $('#btnFit').onclick = () => fit(false);
 $('#btnPanel').onclick = () => { panel.classList.toggle('closed'); };
+$('#btn3d').onclick = (e) => {
+  S.flat = !S.flat;
+  e.currentTarget.setAttribute('aria-pressed', String(!S.flat));
+  if (S.flat) { cam.yaw = 0; cam.pitch = 0; }
+  reheat(0.7); S.dirty = true;
+  setTimeout(() => fit(false), 700);
+  toast(S.flat ? 'Flat view' : '3D view: drag to rotate, pinch to zoom');
+};
 $('#btnPath').onclick = (e) => {
   S.pathMode = !S.pathMode;
   e.currentTarget.setAttribute('aria-pressed', String(S.pathMode));
@@ -846,9 +902,11 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   S.target = null;
+  cam.last = performance.now();
   if (ptrs.size === 1) {
     const hit = pick(e.clientX, e.clientY);
-    g = { type: hit >= 0 ? 'node' : 'pan', node: hit, sx: e.clientX, sy: e.clientY, vx: S.view.x, vy: S.view.y, moved: false, shift: e.shiftKey };
+    cam.last = performance.now();
+    g = { type: hit >= 0 ? 'node' : (S.flat || e.shiftKey ? 'pan' : 'rotate'), node: hit, sx: e.clientX, sy: e.clientY, vx: S.view.x, vy: S.view.y, yaw: cam.yaw, pitch: cam.pitch, moved: false, shift: e.shiftKey };
   } else if (ptrs.size === 2) {
     const [a, b] = [...ptrs.values()];
     g = { type: 'pinch', d0: dist(a, b), k0: S.view.k, moved: true,
@@ -870,13 +928,20 @@ canvas.addEventListener('pointermove', (e) => {
   const dx = e.clientX - g.sx, dy = e.clientY - g.sy;
   if (!g.moved && Math.hypot(dx, dy) > 6) g.moved = true;
   if (!g.moved) return;
+  cam.last = performance.now();
   if (g.type === 'pan') {
     S.view.x = g.vx + dx; S.view.y = g.vy + dy; S.dirty = true;
+  } else if (g.type === 'rotate') {
+    cam.yaw = g.yaw + dx * 0.008;
+    cam.pitch = Math.max(-1.45, Math.min(1.45, g.pitch + dy * 0.008));
+    S.dirty = true;
   } else if (g.type === 'node') {
-    const n = S.nodes[g.node];
+    const n = S.nodes[g.node], m = cam.m;
     n.pinned = true;
-    n.x = (e.clientX - S.view.x) / S.view.k;
-    n.y = (e.clientY - S.view.y) / S.view.k;
+    // move the node inside the plane facing you, keeping its depth
+    const x1 = (e.clientX - S.view.x) / (S.view.k * n.ps), y2 = (e.clientY - S.view.y) / (S.view.k * n.ps), z2 = n.pz;
+    const y = y2 * m.cp + z2 * m.sp, z1 = -y2 * m.sp + z2 * m.cp;
+    n.x = x1 * m.cy - z1 * m.sy; n.y = y; n.z = x1 * m.sy + z1 * m.cy;
     reheat(0.3);
   }
 });
@@ -893,7 +958,7 @@ canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  S.target = null;
+  S.target = null; cam.last = performance.now();
   const k0 = S.view.k, k = Math.max(0.05, Math.min(6, k0 * Math.exp(-e.deltaY * 0.0015)));
   const wx = (e.clientX - S.view.x) / k0, wy = (e.clientY - S.view.y) / k0;
   S.view.k = k; S.view.x = e.clientX - wx * k; S.view.y = e.clientY - wy * k;
