@@ -996,6 +996,32 @@ const gg = (() => {
     btns.forEach((b) => { b.disabled = false; });
   }
   const isComposeRequest = (q) => !/^\s*(?:how|what|why|can you explain|explain)\b/i.test(q) && (/\b(?:write|draft|compose|send|create|prepare|make|start|open)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+|new\s+)*(?:new\s+)?(?:e-?mail|mail|gmail|message)\b/i.test(q) || /^\s*(?:(?:hey|ok|okay|please|jarvis)[\s,]+)*(?:e-?mail|mail)\s+\S/i.test(q));
+  // "what is the email address of Anna", "find Anna's email": look the person up in Contacts and Gmail history
+  const isLookup = (q) => /\b(?:e-?mail(?:\s+address)?|mail\s+address|address)\b/i.test(q) && /\b(?:what(?:'s| is)|find|look\s*up|search|get|give me|show|do you have|know|whose|who)\b/i.test(q) && !/\b(?:write|draft|compose|send)\b/i.test(q);
+  async function lookupAddress(q) {
+    const box = $('#answer');
+    if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google first, then ask again.')); return; }
+    chat.busy = true; orb.set('thinking');
+    box.replaceChildren(el('span', 'muted', 'Looking in your contacts and Gmail…'));
+    try {
+      const list = await getContacts(q);
+      const ws = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w) && !LSTOP.has(w));
+      const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
+      const seen = new Set(), hits = [];
+      for (const c of pool) {
+        if (seen.has(c.email)) continue;
+        const hay = norm(c.name + ' ' + c.email), sc = ws.reduce((t, w) => t + (hay.includes(w) ? 1 : 0), 0);
+        if (ws.length && sc > 0) { seen.add(c.email); hits.push({ c, sc }); }
+      }
+      hits.sort((a, b) => b.sc - a.sc);
+      const top = hits.slice(0, 5).map((h) => (h.c.name ? h.c.name + ': ' : '') + h.c.email);
+      const msg = top.length ? (top.length === 1 ? 'Found: ' : 'Found these: ') + top.join('; ') : 'I could not find that person (searched ' + (book.length ? book.length + ' contacts' : 'recent mail only' + (bookErr ? ', contacts error: ' + bookErr : '')) + ' and your recent Gmail). Try the full name as it is saved in Google Contacts.';
+      box.replaceChildren(el('span', null, msg)); orb.set('idle'); say(msg);
+    } catch (e) {
+      box.replaceChildren(el('span', 'err', 'Lookup failed: ' + e.message)); orb.set('idle');
+    } finally { chat.busy = false; }
+  }
+  const LSTOP = new Set(['address','what','whats','find','look','search','get','give','show','have','know','whose','who','does','his','her','their','please','of','is','for','from']);
   const isBare = (q) => q.replace(/\b(?:please|jarvis|hey|ok|okay|i|want|would|like|to|can|you|could|me|a|an|the|my|new|write|draft|compose|send|create|prepare|make|start|open|e-?mail|mail|gmail|message|via|using|with|in|on|for|now)\b/gi, ' ').replace(/[^\p{L}\p{N}@.]+/gu, ' ').trim().split(/\s+/).filter(Boolean).length < 2;
   async function compose(q) {
     const box = $('#answer');
@@ -1157,7 +1183,7 @@ const gg = (() => {
     if (wantMail && data.mail) out.push({ title: 'Your Gmail inbox', type: 'google', text: data.mail });
     return out;
   }
-  return { init, notesFor, live, compose, isComposeRequest, isEventRequest, addEventDraft };
+  return { init, notesFor, live, compose, isComposeRequest, isEventRequest, addEventDraft, isLookup, lookupAddress };
 })();
 
 const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|today'?s|weather|price of|who is|who was|what is the (?:capital|population)|how much (?:is|does)|score|stock|exchange rate)\b/i;
@@ -1191,6 +1217,7 @@ async function ask(question) {
   if (chat.busy || !question) return;
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
+  if (gg.isLookup(question)) { await gg.lookupAddress(question); return; }
   if (/\b(?:tour|show me around|walk me through|fly through)\b/i.test(question)) { await tour(); return; }
   const box = $('#answer');
   let ask_q = question;
