@@ -519,10 +519,52 @@ function renderAnswer(text) {
   S.dirty = true;
 }
 
+/* ---------- Jarvis voice ---------- */
+const voiceBox = (() => {
+  const KEY = 'jarvisVoice';
+  const sel = () => document.getElementById('voice');
+  let voices = [];
+  const rate = (v) => {                                   // higher = more Jarvis-like
+    const n = (v.name + ' ' + v.lang).toLowerCase();
+    let sc = 0;
+    if (/en[-_]gb/.test(n)) sc += 40;
+    if (/daniel|arthur|oliver|malcolm|gordon/.test(n)) sc += 30;   // British male voices on Apple devices
+    if (/premium|enhanced/.test(n)) sc += 20;
+    if (/^en/.test(v.lang)) sc += 10;
+    if (/novelty|whisper|bad news|bells|boing|cellos|good news|jester|organ|superstar|trinoids|zarvox|albert|bubbles/.test(n)) sc -= 100;
+    return sc;
+  };
+  const load = () => {
+    if (!('speechSynthesis' in window) || !sel()) return;
+    voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang)).sort((a, b) => rate(b) - rate(a) || a.name.localeCompare(b.name));
+    if (!voices.length) return;
+    let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
+    sel().replaceChildren(...voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; }));
+    sel().value = voices.some((v) => v.voiceURI === saved) ? saved : voices[0].voiceURI;
+  };
+  const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
+  const init = () => {
+    if (!('speechSynthesis' in window)) { const l = document.querySelector('label.voice'); if (l) l.style.display = 'none'; return; }
+    load();
+    speechSynthesis.addEventListener('voiceschanged', load);
+    sel().addEventListener('change', () => {
+      try { localStorage.setItem(KEY, sel().value); } catch (e) {}
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance('At your service.');
+      const v = current(); if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = 0.95;
+      speechSynthesis.speak(u);
+    });
+  };
+  return { init, current };
+})();
+
 function say(text) {
   if (!$('#speak').checked || !('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text.replace(/\[\[|\]\]/g, ''));
+  const v = voiceBox.current(); if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = 0.95;
   u.onstart = () => orb.set('speaking');
   u.onend = u.onerror = () => orb.set('idle');
   speechSynthesis.speak(u);
@@ -788,6 +830,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 /* ---------- boot ---------- */
 if (isMobile()) panel.classList.add('closed');
 resize();
+voiceBox.init();
 initChat();
 fetch('graph.json', { cache: 'no-cache' })
   .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
