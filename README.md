@@ -78,3 +78,6 @@ Google shows an "unverified app" warning because it is your own test app: Advanc
 
 ### Writing email
 Say or type "Email Anna that the meeting moved to Thursday". Jarvis finds the address among people you recently emailed, writes the draft and shows it in the panel. **Nothing is sent until you tap Send**; you can edit the text first, **Save draft** (goes to your Gmail Drafts) or **Discard**. This needs the latest `worker/worker.js` (it adds a draft mode) and the Gmail "compose" permission, which Google asks for the next time you tap Connect Google.
+
+## Second free AI: Groq
+Cloudflare's free allowance is 10,000 units a day. For a separate allowance, create a free key at https://console.groq.com/keys and add it to the Worker as a secret named `GROQ_API_KEY`. The Worker then uses Groq first for answers, email drafts and speech-to-text, and falls back to Cloudflare if Groq is busy.

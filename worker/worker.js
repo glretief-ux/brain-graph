@@ -1,6 +1,8 @@
 // Cloudflare Worker: a tiny proxy between the Brain Graph page and the Claude API.
 // Two ways to power it:
 //   FREE:  add a "Workers AI" binding named AI (Worker -> Settings -> Bindings). No key, no card.
+//   GROQ:   add a secret named GROQ_API_KEY (free key from console.groq.com). Used first for answers, drafts and voice
+//           input; Workers AI is the automatic backup when Groq is busy, and the other way round.
 //   CLAUDE: add a secret named ANTHROPIC_API_KEY (paid API). If both exist, Claude is used.
 // The key, if any, lives ONLY here, never in the page.
 //
@@ -9,6 +11,7 @@
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
 //   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct-fp8)
 //   TTS_MODEL          free text-to-speech model (default: @cf/deepgram/aura-2-en)
+//   GROQ_MODEL         Groq chat model (default: llama-3.3-70b-versatile)
 //   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
@@ -21,6 +24,40 @@ Answer using ONLY the notes provided below. If the notes do not contain the answ
 Be concise: one to four short sentences, or a short list. Plain language, no preamble.
 Whenever you mention a note, write its exact title in double square brackets, like [[Seizure Watch]].
 Never invent details that are not in the notes.`;
+
+// ---- Groq (free tier, separate daily allowance from Cloudflare) ----
+async function groqChat(env, messages, max_tokens) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + env.GROQ_API_KEY },
+    body: JSON.stringify({ model: env.GROQ_MODEL || "llama-3.3-70b-versatile", messages, max_tokens, temperature: 0.3 }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d.error && d.error.message) || "Groq error " + r.status);
+  return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").trim();
+}
+async function cfChat(env, messages, max_tokens) {
+  const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", { messages, max_tokens });
+  return String((out && (out.response || out.result)) || "").trim();
+}
+// Free chat: Groq first, Workers AI as backup (or the reverse if only one is set up)
+async function freeChat(env, messages, max_tokens) {
+  let err;
+  if (env.GROQ_API_KEY) { try { const t = await groqChat(env, messages, max_tokens); if (t) return t; } catch (e) { err = e; } }
+  if (env.AI) return cfChat(env, messages, max_tokens);
+  throw err || new Error("No free AI configured");
+}
+async function groqSTT(env, buf, ctype) {
+  const ext = ctype.includes("webm") ? "webm" : ctype.includes("ogg") ? "ogg" : ctype.includes("wav") ? "wav" : ctype.includes("mpeg") ? "mp3" : "m4a";
+  const fd = new FormData();
+  fd.append("file", new Blob([buf], { type: ctype.split(";")[0] }), "clip." + ext);
+  fd.append("model", "whisper-large-v3-turbo");
+  fd.append("response_format", "json");
+  const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { authorization: "Bearer " + env.GROQ_API_KEY }, body: fd });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d.error && d.error.message) || "Groq STT error " + r.status);
+  return String(d.text || "").trim();
+}
 
 export default {
   async fetch(req, env) {
@@ -37,14 +74,18 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
     if (!okOrigin) return json({ error: "Origin not allowed" }, 403, cors);
-    if (!env.ANTHROPIC_API_KEY && !env.AI) return json({ error: "Worker has no AI binding (free) or ANTHROPIC_API_KEY secret yet" }, 500, cors);
+    if (!env.ANTHROPIC_API_KEY && !env.AI && !env.GROQ_API_KEY) return json({ error: "Worker has no AI binding (free), GROQ_API_KEY or ANTHROPIC_API_KEY secret yet" }, 500, cors);
 
     // Voice: the page posts a short audio clip, we answer with the transcript (free Whisper on Workers AI)
     const ctype = req.headers.get("Content-Type") || "";
     if (ctype.startsWith("audio/") || ctype.startsWith("video/")) {
-      if (!env.AI) return json({ error: "Voice needs the Workers AI binding named AI" }, 500, cors);
+      if (!env.AI && !env.GROQ_API_KEY) return json({ error: "Voice needs GROQ_API_KEY or the Workers AI binding named AI" }, 500, cors);
       const buf = await req.arrayBuffer();
       if (!buf.byteLength || buf.byteLength > 6 * 1024 * 1024) return json({ error: "Audio empty or too long" }, 400, cors);
+      if (env.GROQ_API_KEY) {
+        try { return json({ text: await groqSTT(env, buf, ctype) }, 200, cors); }
+        catch (e) { if (!env.AI) return json({ error: "Transcription error: " + (e && e.message ? e.message : "unknown") }, 502, cors); }
+      }
       try {
         const bytes = new Uint8Array(buf);
         let bin = "";
@@ -81,11 +122,7 @@ ${contacts || "(none)"}`;
           if (!r.ok) return json({ error: (d.error && d.error.message) || "Claude API error" }, 502, cors);
           text = (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
         } else {
-          const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", {
-            messages: [{ role: "system", content: sys }, { role: "user", content: request }],
-            max_tokens: 600,
-          });
-          text = String((out && (out.response || out.result)) || "");
+          text = await freeChat(env, [{ role: "system", content: sys }, { role: "user", content: request }], 600);
         }
         const m = text.match(/\{[\s\S]*\}/);
         const d = m ? JSON.parse(m[0]) : null;
@@ -122,8 +159,8 @@ ${contacts || "(none)"}`;
     if (!question) return json({ error: "Empty question" }, 400, cors);
 
     const useClaude = Boolean(env.ANTHROPIC_API_KEY);
-    const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, useClaude ? 25 : 10);
-    const textCap = useClaude ? 2500 : 1200; // free model gets a smaller context
+    const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, useClaude || env.GROQ_API_KEY ? 25 : 10);
+    const textCap = useClaude || env.GROQ_API_KEY ? 2500 : 1200; // free model gets a smaller context
     const context = notes
       .map((n) => `## ${String(n.title).slice(0, 120)} (${String(n.type).slice(0, 30)})\n${String(n.text).slice(0, textCap)}`)
       .join("\n\n");
@@ -144,11 +181,7 @@ ${contacts || "(none)"}`;
 
     if (!useClaude) {
       try {
-        const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", {
-          messages: [{ role: "system", content: system }, ...messages],
-          max_tokens: 500,
-        });
-        const answer = String((out && (out.response || out.result)) || "").trim();
+        const answer = await freeChat(env, [{ role: "system", content: system }, ...messages], 500);
         if (!answer) return json({ error: "The free model returned nothing" }, 502, cors);
         return json({ answer }, 200, cors);
       } catch (e) {
