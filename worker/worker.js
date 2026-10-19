@@ -77,6 +77,30 @@ async function groqSTT(env, buf, ctype) {
   return String(d.text || "").trim();
 }
 
+// ---- Live web search (free, no key): DuckDuckGo results, Wikipedia as backup ----
+const strip = (h) => String(h || "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+async function webSearch(q) {
+  const out = [];
+  try {
+    const r = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), { headers: { "User-Agent": "Mozilla/5.0 (compatible; BrainGraph/1.0)" } });
+    const html = await r.text();
+    const re = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    let m;
+    while ((m = re.exec(html)) && out.length < 6) {
+      let url = m[1]; const u = url.match(/uddg=([^&]+)/); if (u) url = decodeURIComponent(u[1]);
+      out.push({ title: strip(m[2]).slice(0, 120), url, text: strip(m[3]).slice(0, 400) });
+    }
+  } catch (e) { /* try Wikipedia */ }
+  if (out.length < 2) {
+    try {
+      const r = await fetch("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=4&srsearch=" + encodeURIComponent(q));
+      const d = await r.json();
+      for (const x of (d.query && d.query.search) || []) out.push({ title: x.title, url: "https://en.wikipedia.org/wiki/" + encodeURIComponent(x.title.replace(/ /g, "_")), text: strip(x.snippet).slice(0, 300) });
+    } catch (e) { /* nothing */ }
+  }
+  return out;
+}
+
 export default {
   async fetch(req, env) {
     const origin = req.headers.get("Origin") || "";
@@ -118,6 +142,32 @@ export default {
 
     let body;
     try { body = await req.json(); } catch { return json({ error: "Bad JSON" }, 400, cors); }
+
+    // Web search: the page sends {search}; we answer with {results:[{title,url,text}]}
+    if (body.search) {
+      const results = await webSearch(String(body.search).slice(0, 200));
+      return json({ results }, 200, cors);
+    }
+
+    // Calendar event: the page sends {event, now}; we answer with {event:{title,start,end,location}} (local times, no timezone)
+    if (body.event) {
+      const sys = `You turn a request into one calendar event. Reply with ONLY JSON: {"title":"","start":"YYYY-MM-DDTHH:MM","end":"YYYY-MM-DDTHH:MM","location":""}.
+Current date and time: ${String(body.now || "").slice(0, 80)}. Resolve words like tomorrow or Thursday from it. Use 24-hour local times. If no duration is given use 1 hour. If no time is given use 09:00. Keep the title short.`;
+      try {
+        let text;
+        if (env.ANTHROPIC_API_KEY) {
+          const r = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: env.MODEL || "claude-sonnet-5-5", max_tokens: 300, system: sys, messages: [{ role: "user", content: String(body.event).slice(0, 500) }] }) });
+          const d = await r.json().catch(() => ({}));
+          text = (d.content || []).map((b) => b.text || "").join("");
+        } else text = await freeChat(env, [{ role: "system", content: sys }, { role: "user", content: String(body.event).slice(0, 500) }], 300);
+        const m = text.match(/\{[\s\S]*\}/);
+        const e = m ? JSON.parse(m[0]) : null;
+        if (!e || !e.title || !/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(e.start || "")) return json({ error: "Could not understand the event, try rephrasing" }, 502, cors);
+        return json({ event: { title: String(e.title).slice(0, 150), start: e.start.slice(0, 16), end: String(e.end || "").slice(0, 16), location: String(e.location || "").slice(0, 150) } }, 200, cors);
+      } catch (err) {
+        return json({ error: "Event error: " + (err && err.message ? err.message : "unknown") }, 502, cors);
+      }
+    }
 
     // Email drafting: the page sends {compose, contacts}; we answer with {draft:{to,subject,body}}. Nothing is sent from here.
     if (body.compose) {

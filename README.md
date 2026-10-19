@@ -81,3 +81,9 @@ Say or type "Email Anna that the meeting moved to Thursday". Jarvis finds the ad
 
 ## Second free AI: Groq
 Cloudflare's free allowance is 10,000 units a day. For a separate allowance, create a free key at https://console.groq.com/keys and add it to the Worker as a secret named `GROQ_API_KEY`. The Worker then uses Groq first for answers, email drafts and speech-to-text, and falls back to Cloudflare if Groq is busy.
+
+## More things Jarvis can do
+- **Web research:** ask for anything current ("search the web for...", "latest news on...", "weather..."). The Worker searches DuckDuckGo (Wikipedia as backup) and Jarvis answers from the results.
+- **Tour:** say "give me a tour". The camera flies through your most connected notes and Jarvis reads each one.
+- **Briefing:** say "good morning" or "briefing" for today's calendar, unread email and open items.
+- **Calendar events:** say "schedule a meeting with Anna on Thursday at 10". Jarvis fills in an event card and you tap Add. This needs the "calendar events" permission, so tap Sign out and Connect Google again once.

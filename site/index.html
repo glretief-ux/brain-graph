@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -46,6 +46,17 @@
     <label class="voice">Voice <select id="voice" aria-label="Jarvis voice"></select></label>
     <p id="voiceStatus" class="voice" style="color:#9fb3c8">Tap the orb to talk.</p>
     <label class="voice">Microphone <select id="mic" aria-label="Microphone"><option value="">Default (tap the orb to list)</option></select></label>
+    <div id="evcard" hidden>
+      <div class="clabel">Calendar event (nothing is added until you tap Add)</div>
+      <input id="eTitle" type="text" placeholder="Title" autocomplete="off">
+      <label class="elab">Starts <input id="eStart" type="datetime-local"></label>
+      <label class="elab">Ends <input id="eEnd" type="datetime-local"></label>
+      <input id="eLoc" type="text" placeholder="Location (optional)" autocomplete="off">
+      <div class="grow">
+        <button type="button" id="eAdd" class="gbtn">Add</button>
+        <button type="button" id="eCancel" class="gbtn">Discard</button>
+      </div>
+    </div>
   </section>
 
   <section id="google">
@@ -93,7 +104,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=24"></script>
-<script src="app.js?v=24"></script>
+<script src="config.js?v=25"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

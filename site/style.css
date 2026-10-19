@@ -151,3 +151,9 @@ label.voice select { max-width: 100%; }
 #compose input, #compose textarea { width: 100%; padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 16px; color: var(--text); background: rgba(255,255,255,.05); border: 1px solid var(--line); resize: vertical; }
 #compose input { height: 44px; padding-top: 0; padding-bottom: 0; }
 #compose .gbtn:disabled { opacity: .5; }
+
+#evcard { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+#evcard[hidden] { display: none; }
+#evcard .clabel { color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+#evcard input { width: 100%; padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 16px; color: var(--text); background: rgba(255,255,255,.05); border: 1px solid var(--line); min-height: 44px; }
+#evcard .elab { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }

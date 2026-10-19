@@ -702,8 +702,8 @@ function speakLocal(clean) {
 /* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
 const gg = (() => {
   const CID = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.googleClientId) || '';
-  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose';
-  let token = '', exp = 0, tc = null, at = 0, canWrite = false, contacts = [], contactsAt = 0;
+  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events';
+  let token = '', exp = 0, tc = null, at = 0, canWrite = false, canCal = false, contacts = [], contactsAt = 0;
   const data = { cal: '', mail: '', events: [], unread: null, from: [] };
   const live = () => !!token && Date.now() < exp - 30000;
   const when = (d, opt) => d.toLocaleString('en-GB', opt);
@@ -866,6 +866,47 @@ const gg = (() => {
     } finally { chat.busy = false; }
   }
 
+  // ---- calendar events by voice: Jarvis fills in the event, you tap Add ----
+  const isEventRequest = (q) => !/^\s*(?:how|what|why|when|do i|am i|is there|any)\b/i.test(q) && /\b(?:add|create|schedule|book|put|set up|plan|make)\b[^.?!]*\b(?:meeting|event|appointment|call|lunch|dinner|reminder|calendar|interview|training|session)\b/i.test(q);
+  const evf = () => ({ title: $('#eTitle'), start: $('#eStart'), end: $('#eEnd'), loc: $('#eLoc') });
+  const hideEvent = () => { $('#evcard').hidden = true; };
+  async function addEventDraft(q) {
+    const box = $('#answer');
+    if (!CHAT_URL) { box.replaceChildren(el('span', 'muted', 'Calendar events need the Cloudflare Worker (chat) to be set up.')); return; }
+    if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google first, then ask again.')); return; }
+    if (!canCal) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "calendar events", then ask again.')); return; }
+    chat.busy = true; orb.set('thinking');
+    box.replaceChildren(el('span', 'muted', 'Preparing the event…'));
+    try {
+      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: q, now: nowLine() }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.event) throw new Error(d.error || 'No event (' + r.status + ')');
+      const f = evf(), e = d.event;
+      f.title.value = e.title; f.start.value = e.start;
+      if (e.end) f.end.value = e.end; else { const t = new Date(e.start); t.setHours(t.getHours() + 1); f.end.value = new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+      f.loc.value = e.location || '';
+      $('#evcard').hidden = false; panel.classList.remove('closed');
+      $('#evcard').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const msg = 'Event ready: ' + e.title + ', ' + when(new Date(e.start), { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) + '. Check it, then tap Add.';
+      box.replaceChildren(el('span', null, msg)); orb.set('idle'); say(msg);
+    } catch (e) {
+      box.replaceChildren(el('span', 'err', 'Could not prepare the event: ' + e.message)); orb.set('idle');
+    } finally { chat.busy = false; }
+  }
+  async function saveEvent() {
+    const f = evf();
+    if (!f.title.value.trim() || !f.start.value) { toast('Give the event a title and a start time'); return; }
+    if (!live()) { toast('Google sign-in expired. Tap Connect Google again.'); return; }
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const body = { summary: f.title.value.trim(), location: f.loc.value.trim() || undefined, start: { dateTime: f.start.value + ':00', timeZone: tz }, end: { dateTime: (f.end.value || f.start.value) + ':00', timeZone: tz } };
+    const b = $('#eAdd'); b.disabled = true;
+    try {
+      await apiPost('https://www.googleapis.com/calendar/v3/calendars/primary/events', body);
+      toast('Added to your calendar'); say('Added to your calendar.'); hideEvent(); refresh();
+    } catch (e) { toast(e.message); }
+    b.disabled = false;
+  }
+
   function render(msg) {
     const st = $('#gStatus'), ag = $('#gAgenda');
     const on = live();
@@ -901,6 +942,7 @@ const gg = (() => {
         if (r.error) { toast('Google: ' + (r.error_description || r.error)); return; }
         token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000;
         canWrite = String(r.scope || '').includes('gmail.compose');
+        canCal = String(r.scope || '').includes('calendar.events');
         refresh();
       },
       error_callback: (e) => toast('Google sign-in ' + ((e && e.type) || 'failed').replace(/_/g, ' '))
@@ -909,7 +951,7 @@ const gg = (() => {
   }
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
-    token = ''; exp = 0; canWrite = false; contacts = []; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
+    token = ''; exp = 0; canWrite = false; canCal = false; contacts = []; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
     hideCompose();
     render();
   }
@@ -925,6 +967,8 @@ const gg = (() => {
     $('#cSend').addEventListener('click', () => act('send'));
     $('#cSave').addEventListener('click', () => act('draft'));
     $('#cCancel').addEventListener('click', hideCompose);
+    $('#eAdd').addEventListener('click', saveEvent);
+    $('#eCancel').addEventListener('click', hideEvent);
   }
   // Extra notes for Jarvis, only when the question is about calendar or mail
   async function notesFor(q) {
@@ -938,13 +982,44 @@ const gg = (() => {
     if (wantMail && data.mail) out.push({ title: 'Your Gmail inbox', type: 'google', text: data.mail });
     return out;
   }
-  return { init, notesFor, live, compose, isComposeRequest };
+  return { init, notesFor, live, compose, isComposeRequest, isEventRequest, addEventDraft };
 })();
+
+const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|today'?s|weather|price of|who is|who was|what is the (?:capital|population)|how much (?:is|does)|score|stock|exchange rate)\b/i;
+
+// Fly through the most connected notes and read each one out
+async function tour() {
+  const hubs = [...S.vis].sort((a, b) => b.degree - a.degree).slice(0, 6);
+  if (!hubs.length) return;
+  chat.busy = true; panel.classList.remove('closed');
+  const box = $('#answer');
+  try {
+    S.flat = false; $('#btn3d').setAttribute('aria-pressed', 'true');
+    for (const n of hubs) {
+      select(n.i, true); reheat(0.3);
+      const nt = NOTES.find((x) => x.title === n.title);
+      const first = nt ? String(nt.text || '').replace(/^---[\s\S]*?---/, '').replace(/[#*>\[\]`]/g, '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0] : '';
+      const line = n.title + '. ' + (first || 'It connects to ' + n.degree + ' other notes.').slice(0, 160);
+      box.replaceChildren(el('span', null, line));
+      say(line);
+      await new Promise((r) => setTimeout(r, 600));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 30000 && (voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)))) await new Promise((r) => setTimeout(r, 250));
+      if (!$('#speak').checked) await new Promise((r) => setTimeout(r, 3500));
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    fit(false); box.replaceChildren(el('span', null, 'That was the tour of your most connected notes.'));
+  } finally { chat.busy = false; orb.set('idle'); }
+}
 
 async function ask(question) {
   if (chat.busy || !question) return;
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
+  if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
+  if (/\b(?:tour|show me around|walk me through|fly through)\b/i.test(question)) { await tour(); return; }
   const box = $('#answer');
+  let ask_q = question;
+  if (/^\s*(?:good\s+(?:morning|afternoon|evening)|morning|briefing|brief me|daily brief|jarvis status|status)\b/i.test(question)) ask_q = 'Give me a short spoken briefing for now: my calendar for today and tomorrow, my unread email, and my open items from the notes. Three or four sentences.';
   if (!CHAT_URL) {                                              // free search mode
     const a = localAnswer(question);
     renderAnswer(a);
@@ -958,10 +1033,19 @@ async function ask(question) {
   box.replaceChildren(el('span', 'muted', 'Thinking…'));
   S.cited = new Set();
   try {
+    let web = [];
+    if (WEB_RE.test(question)) {                                   // needs current information: search the web through the Worker
+      box.replaceChildren(el('span', 'muted', 'Searching the web…'));
+      try {
+        const wr = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search: question.replace(/^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google)\s+/i, '') }) });
+        const wd = await wr.json().catch(() => ({}));
+        web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
+      } catch (e) { /* answer without it */ }
+    }
     const r = await fetch(CHAT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, notes: [...(await gg.notesFor(question)), ...retrieve(question)].slice(0, 10), history: chat.history })
+      body: JSON.stringify({ question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history })
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
