@@ -1029,7 +1029,26 @@ function initChat() {
 
 /* ---------- hands-free conversation (needs the Worker for speech-to-text) ---------- */
 const convo = (() => {
-  let on = false, stream = null, ctx = null, lastPeak = 0;
+  let on = false, stream = null, ctx = null, lastPeak = 0, tried = new Set();
+  const micSel = () => document.getElementById('mic');
+  const savedMic = () => { try { return localStorage.getItem('brain.mic') || ''; } catch (e) { return ''; } };
+  const openStream = (id) => navigator.mediaDevices.getUserMedia({ audio: Object.assign({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }, id ? { deviceId: { exact: id } } : {}) });
+  async function listMics() {
+    let all = [];
+    try { all = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications'); } catch (e) {}
+    const sel = micSel(); if (!sel) return all;
+    const cur = stream && stream.getAudioTracks()[0] ? stream.getAudioTracks()[0].getSettings().deviceId : '';
+    sel.innerHTML = '';
+    all.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('Microphone ' + (i + 1)); if (d.deviceId === cur) o.selected = true; sel.appendChild(o); });
+    return all;
+  }
+  async function useMic(id) {                                           // switch to another microphone
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = await openStream(id);
+    tried.add(stream.getAudioTracks()[0].getSettings().deviceId || id);
+    try { localStorage.setItem('brain.mic', id || ''); } catch (e) {}
+    await listMics();
+  }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const supported = () => !!(CHAT_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
@@ -1083,7 +1102,14 @@ const convo = (() => {
       if (!on) break;
       if (!clip) {
         const dev = stream && stream.getAudioTracks()[0] ? stream.getAudioTracks()[0].label : 'unknown microphone';
-        toast(lastPeak < 0.004 ? 'Mic "' + dev + '" is silent. Check Windows sound input or pick another mic in Chrome (lock icon).' : 'Did not catch speech (mic "' + dev + '"). Tap the orb and try again.');
+        if (lastPeak < 0.004) {                                              // silent mic: try the next one automatically
+          const all = await listMics();
+          const next = all.find((d) => !tried.has(d.deviceId));
+          if (next) {
+            try { await useMic(next.deviceId); toast('Mic "' + dev + '" was silent. Trying "' + (next.label || 'next microphone') + '".'); continue; } catch (e) {}
+          }
+          toast('No microphone picked up sound (last tried "' + dev + '"). Choose another under Microphone in the panel, or check Windows Sound > Input.');
+        } else toast('Did not catch speech (mic "' + dev + '"). Tap the orb and try again.');
         break;
       }
       orb.set('thinking');
@@ -1102,7 +1128,10 @@ const convo = (() => {
   async function start() {
     if (on) return;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      tried = new Set();
+      try { stream = await openStream(savedMic()); } catch (e) { if (e && e.name === 'NotFoundError' || e && e.name === 'OverconstrainedError') stream = await openStream(''); else throw e; }
+      const id0 = stream.getAudioTracks()[0].getSettings().deviceId; if (id0) tried.add(id0);
+      listMics();
     } catch (e) {
       toast(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
       return false;
@@ -1124,6 +1153,12 @@ const convo = (() => {
     orb.el.classList.remove('live');
     orb.set('idle');
   }
+  document.addEventListener('change', async (e) => {
+    if (e.target && e.target.id === 'mic') {
+      if (on && stream) { try { tried = new Set(); await useMic(e.target.value); toast('Microphone changed'); } catch (err) { toast('Could not use that microphone'); } }
+      else { try { localStorage.setItem('brain.mic', e.target.value); } catch (err) {} }
+    }
+  });
   return { supported, toggle: () => (on ? stop() : start()), isOn: () => on };
 })();
 

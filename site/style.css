@@ -131,7 +131,8 @@ label.inline { justify-content: flex-start; margin: 8px 0 0; font-size: 12px; }
 #orb.live #orbc { filter: drop-shadow(0 0 16px rgba(56, 189, 248, .6)); }
 #orb.live #orbState { border-color: rgba(56, 189, 248, .5); }
 
-label.voice { margin: 6px 0 0; font-size: 12px; }
+label.voice { margin: 6px 0 0; font-size: 12px; display: block; }
+label.voice select { max-width: 100%; }
 #voice { flex: 1; min-width: 0; max-width: 190px; height: 36px; border-radius: 10px; font: inherit; font-size: 14px; color: var(--text); background: rgba(255, 255, 255, .06); border: 1px solid var(--line); padding: 0 8px; }
 
 #google .hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
