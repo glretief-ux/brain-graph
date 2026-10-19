@@ -87,3 +87,6 @@ Cloudflare's free allowance is 10,000 units a day. For a separate allowance, cre
 - **Tour:** say "give me a tour". The camera flies through your most connected notes and Jarvis reads each one.
 - **Briefing:** say "good morning" or "briefing" for today's calendar, unread email and open items.
 - **Calendar events:** say "schedule a meeting with Anna on Thursday at 10". Jarvis fills in an event card and you tap Add. This needs the "calendar events" permission, so tap Sign out and Connect Google again once.
+
+## Free AI key in the browser (no Worker needed)
+Open the side panel, paste a free Groq key (https://console.groq.com/keys) under "Free AI key" and tap Save key. Answers, email drafts, calendar events and listening then run straight from your browser to Groq. The key is kept only in that browser and is never sent to this repo. The Worker is only used for the spoken AI voice.

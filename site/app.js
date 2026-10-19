@@ -493,6 +493,101 @@ const orb = (() => {
 
 /* ---------- ask the brain (chat) ---------- */
 const CHAT_URL = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.chatUrl) || '';
+/* ---------- Groq straight from this browser (your free key stays in this browser only) ---------- */
+const GKEY = () => { try { return localStorage.getItem('brain.groq') || ''; } catch (e) { return ''; } };
+const AI_READY = () => !!(CHAT_URL || GKEY());
+const BRAIN_SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's personal knowledge base (their "second brain").
+Answer using the notes provided below (they may include live calendar, Gmail and web results). If they do not contain the answer, say so briefly.
+Be concise: one to four short sentences, or a short list. Plain language, no preamble.
+Whenever you mention a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
+Never invent details that are not in the notes.`;
+let groqModel = '';
+async function groqPickModel() {
+  const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } });
+  const d = await r.json().catch(() => ({}));
+  const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
+  return ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'].find((m) => ids.includes(m)) || ids[0] || '';
+}
+async function groqChatDirect(messages, max_tokens) {
+  const call = (model) => fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
+    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 })
+  });
+  let r = await call(groqModel || 'llama-3.1-8b-instant');
+  let d = await r.json().catch(() => ({}));
+  if (!r.ok && /model/i.test((d.error && d.error.message) || '')) {
+    const alt = await groqPickModel();
+    if (alt) { groqModel = alt; r = await call(alt); d = await r.json().catch(() => ({})); }
+  }
+  if (!r.ok) throw new Error('Groq: ' + ((d.error && d.error.message) || 'error ' + r.status));
+  return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
+}
+const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () => obj });
+// Same job as the Worker's text modes, but done here when a Groq key is saved. Falls back to the Worker.
+async function brainFetch(body) {
+  if (GKEY()) {
+    try {
+      if (body.question) {
+        const ctx = (body.notes || []).slice(0, 9).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 1000)).join('\n\n');
+        const msgs = [];
+        for (const m of (body.history || []).slice(-6)) {
+          const exp = msgs.length % 2 === 0 ? 'user' : 'assistant';
+          if (m && m.role === exp && m.content) msgs.push({ role: m.role, content: String(m.content).slice(0, 1200) });
+        }
+        if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
+        msgs.push({ role: 'user', content: String(body.question).slice(0, 1000) });
+        const answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
+        return fakeRes({ answer });
+      }
+      if (body.compose) {
+        const sys = 'You write email drafts for the user. Reply with ONLY a JSON object: {"to":"","subject":"","body":""}.\n"to" must be ONE email address: copy it from the CONTACTS list when a name in the request matches a contact, or use an address the request spells out. If nothing matches, leave "to" empty. Never invent an address.\nWrite the email in the same language as the request unless asked otherwise. Short, polite and natural, in the first person as the user, with a greeting and a closing line. No placeholders like [Your name] and no text outside the JSON.\n\nCONTACTS:\n' + ((body.contacts || []).slice(0, 60).join('\n') || '(none)');
+        const text = await groqChatDirect([{ role: 'system', content: sys }, { role: 'user', content: String(body.compose).slice(0, 1000) }], 600);
+        const m = text.match(/\{[\s\S]*\}/); const d = m ? JSON.parse(m[0]) : null;
+        if (!d || !d.body) return fakeRes({ error: 'Could not write a draft, try rephrasing' }, false, 502);
+        return fakeRes({ draft: { to: String(d.to || ''), subject: String(d.subject || ''), body: String(d.body) } });
+      }
+      if (body.event) {
+        const sys = 'You turn a request into one calendar event. Reply with ONLY JSON: {"title":"","start":"YYYY-MM-DDTHH:MM","end":"YYYY-MM-DDTHH:MM","location":""}.\nCurrent date and time: ' + String(body.now || '') + '. Resolve words like tomorrow or Thursday from it. Use 24-hour local times. If no duration is given use 1 hour. If no time is given use 09:00. Keep the title short.';
+        const text = await groqChatDirect([{ role: 'system', content: sys }, { role: 'user', content: String(body.event).slice(0, 500) }], 300);
+        const m = text.match(/\{[\s\S]*\}/); const e = m ? JSON.parse(m[0]) : null;
+        if (!e || !e.title || !/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(e.start || '')) return fakeRes({ error: 'Could not understand the event, try rephrasing' }, false, 502);
+        return fakeRes({ event: { title: String(e.title), start: e.start.slice(0, 16), end: String(e.end || '').slice(0, 16), location: String(e.location || '') } });
+      }
+      if (body.search) {
+        const r = await fetch('https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=5&srsearch=' + encodeURIComponent(String(body.search).slice(0, 200)));
+        const d = await r.json().catch(() => ({}));
+        const results = ((d.query && d.query.search) || []).map((x) => ({ title: x.title, url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(x.title.replace(/ /g, '_')), text: String(x.snippet).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').slice(0, 300) }));
+        return fakeRes({ results });
+      }
+    } catch (e) {
+      if (!CHAT_URL) return fakeRes({ error: e.message || 'Groq error' }, false, 502);
+      if (!body.question && !body.compose && !body.event && !body.search) throw e;
+      brainFetch.lastErr = e.message;                                     // fall through to the Worker
+    }
+  }
+  if (!CHAT_URL) return fakeRes({ error: 'Add a free Groq key in the panel (Free AI key), or set up the Worker.' }, false, 400);
+  const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
+  return r;
+}
+async function brainSTT(blob) {
+  if (GKEY()) {
+    const ct = (blob.type || 'audio/webm').split(';')[0];
+    const ext = ct.includes('webm') ? 'webm' : ct.includes('ogg') ? 'ogg' : ct.includes('wav') ? 'wav' : ct.includes('mpeg') ? 'mp3' : 'm4a';
+    const fd = new FormData(); fd.append('file', new File([blob], 'clip.' + ext, { type: ct })); fd.append('model', 'whisper-large-v3-turbo'); fd.append('response_format', 'json');
+    try {
+      const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + GKEY() }, body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) return String(d.text || '');
+      if (!CHAT_URL) throw new Error('Groq: ' + ((d.error && d.error.message) || r.status));
+    } catch (e) { if (!CHAT_URL) throw e; }
+  }
+  const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0] }, body: blob });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Speech service error ' + r.status);
+  return d.text || '';
+}
+
 let NOTES = [];
 const chat = { history: [], busy: false };
 const STOP = new Set('the and for with what which who how are was were this that from have has about does did can you your our their them into out all any not but use used using show tell give list when where why more most there here its it is of in on to a an or as at by be'.split(' '));
@@ -871,7 +966,7 @@ const gg = (() => {
   const isBare = (q) => q.replace(/\b(?:please|jarvis|hey|ok|okay|i|want|would|like|to|can|you|could|me|a|an|the|my|new|write|draft|compose|send|create|prepare|make|start|open|e-?mail|mail|gmail|message|via|using|with|in|on|for|now)\b/gi, ' ').replace(/[^\p{L}\p{N}@.]+/gu, ' ').trim().split(/\s+/).filter(Boolean).length < 2;
   async function compose(q) {
     const box = $('#answer');
-    if (!CHAT_URL) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs the Cloudflare Worker (chat) to be set up.')); return; }
+    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs a free Groq key (panel: Free AI key).')); return; }
     if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google (Calendar & Gmail panel) first, then ask again.')); return; }
     if (!canWrite) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "send email", then ask again.')); return; }
     if (isBare(q)) {                                                          // no recipient or topic given: open an empty draft to fill in
@@ -885,7 +980,7 @@ const gg = (() => {
     box.replaceChildren(el('span', 'muted', 'Writing the draft…'));
     try {
       const list = await getContacts(q);
-      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ compose: q, contacts: list }) });
+      const r = await brainFetch({ compose: q, contacts: list });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
       const f = cf();
@@ -919,13 +1014,13 @@ const gg = (() => {
   const hideEvent = () => { $('#evcard').hidden = true; };
   async function addEventDraft(q) {
     const box = $('#answer');
-    if (!CHAT_URL) { box.replaceChildren(el('span', 'muted', 'Calendar events need the Cloudflare Worker (chat) to be set up.')); return; }
+    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Calendar events need a free Groq key (panel: Free AI key).')); return; }
     if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google first, then ask again.')); return; }
     if (!canCal) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "calendar events", then ask again.')); return; }
     chat.busy = true; orb.set('thinking');
     box.replaceChildren(el('span', 'muted', 'Preparing the event…'));
     try {
-      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: q, now: nowLine() }) });
+      const r = await brainFetch({ event: q, now: nowLine() });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.event) throw new Error(d.error || 'No event (' + r.status + ')');
       const f = evf(), e = d.event;
@@ -1067,7 +1162,7 @@ async function ask(question) {
   const box = $('#answer');
   let ask_q = question;
   if (/^\s*(?:good\s+(?:morning|afternoon|evening)|morning|briefing|brief me|daily brief|jarvis status|status)\b/i.test(question)) ask_q = 'Give me a short spoken briefing for now: my calendar for today and tomorrow, my unread email, and my open items from the notes. Three or four sentences.';
-  if (!CHAT_URL) {                                              // free search mode
+  if (!AI_READY()) {                                            // free search mode
     const a = localAnswer(question);
     renderAnswer(a);
     orb.set('idle');
@@ -1084,16 +1179,12 @@ async function ask(question) {
     if (WEB_RE.test(question)) {                                   // needs current information: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {
-        const wr = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search: question.replace(/^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google)\s+/i, '') }) });
+        const wr = await brainFetch({ search: question.replace(/^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google)\s+/i, '') });
         const wd = await wr.json().catch(() => ({}));
         web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
       } catch (e) { /* answer without it */ }
     }
-    const r = await fetch(CHAT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history })
-    });
+    const r = await brainFetch({ question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
@@ -1112,7 +1203,7 @@ async function ask(question) {
 
 function initChat() {
   const form = $('#askForm'), input = $('#askInput'), mic = $('#askMic');
-  if (!CHAT_URL) {
+  if (!AI_READY()) {
     input.placeholder = 'Search your notes… (free mode)';
   }
   fetch('notes.json', { cache: 'no-cache' }).then((r) => r.json()).then((d) => { NOTES = d; }).catch(() => {});
@@ -1194,7 +1285,7 @@ const convo = (() => {
   }
   const say2 = (m) => { toast(m); const el = document.getElementById('voiceStatus'); if (el) el.textContent = m; };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const supported = () => !!(CHAT_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  const supported = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
   // Wait for the user to speak, record until they pause, return the clip (or null if nobody spoke)
   async function record() {
@@ -1231,12 +1322,7 @@ const convo = (() => {
     return spoke && on ? new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }) : null;
   }
 
-  async function transcribe(blob) {
-    const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0] }, body: blob });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || 'Speech service error ' + r.status);
-    return d.text || '';
-  }
+  async function transcribe(blob) { return brainSTT(blob); }
 
   async function loop() {
     while (on) {
@@ -1304,6 +1390,31 @@ const convo = (() => {
     }
   });
   return { supported, toggle: () => (on ? stop() : start()), isOn: () => on };
+})();
+
+/* ---------- Free AI key (stored only in this browser) ---------- */
+(() => {
+  const inp = $('#gkKey'), btn = $('#gkSave'), st = $('#gkStatus'), clr = $('#gkClear');
+  if (!inp) return;
+  const show = () => {
+    const on = !!GKEY();
+    st.textContent = on ? 'Groq key saved in this browser. Jarvis uses it directly.' : 'Paste your free Groq key (starts with gsk_). It stays in this browser only.';
+    inp.value = ''; clr.hidden = !on;
+  };
+  btn.addEventListener('click', async () => {
+    const k = inp.value.trim();
+    if (!/^gsk_[A-Za-z0-9]{20,}$/.test(k)) { toast('That does not look like a Groq key. It starts with gsk_'); return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
+      if (!r.ok) throw new Error(r.status === 401 ? 'Groq says this key is not valid' : 'Groq error ' + r.status);
+      localStorage.setItem('brain.groq', k); groqModel = '';
+      toast('Groq key works and is saved'); show();
+    } catch (e) { toast(e.message === 'Failed to fetch' ? 'Could not reach Groq. Check your internet or VPN.' : e.message); }
+    btn.disabled = false;
+  });
+  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; show(); });
+  show();
 })();
 
 /* ---------- controls ---------- */
