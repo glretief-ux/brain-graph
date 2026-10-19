@@ -508,7 +508,35 @@ async function groqPickModel() {
   const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
   return ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'].find((m) => ids.includes(m)) || ids[0] || '';
 }
+const IS_GEM = () => /^AIza/.test(GKEY());
+let gemModel = '';
+async function gemCall(model, payload) {
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const d = await r.json().catch(() => ({}));
+  return { r, d };
+}
+async function gemPick() {
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(GKEY()));
+  const d = await r.json().catch(() => ({}));
+  const ids = ((d && d.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name).replace('models/', ''));
+  return ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'].find((m) => ids.includes(m)) || ids.find((m) => /flash/.test(m) && !/lite|image|tts|live|thinking/.test(m)) || ids[0] || '';
+}
+async function gemGenerate(payload) {
+  let { r, d } = await gemCall(gemModel || 'gemini-flash-latest', payload);
+  if (!r.ok && /model|not found|not supported/i.test((d.error && d.error.message) || '')) {
+    const alt = await gemPick();
+    if (alt) { gemModel = alt; ({ r, d } = await gemCall(alt, payload)); }
+  }
+  if (!r.ok) throw new Error('Gemini: ' + ((d.error && d.error.message) || 'error ' + r.status));
+  const cand = (d.candidates || [])[0];
+  return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
+}
 async function groqChatDirect(messages, max_tokens) {
+  if (IS_GEM()) {
+    const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+    const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 400), temperature: 0.3 } });
+  }
   const call = (model) => fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 })
@@ -565,12 +593,17 @@ async function brainFetch(body) {
       brainFetch.lastErr = e.message;                                     // fall through to the Worker
     }
   }
-  if (!CHAT_URL) return fakeRes({ error: 'Add a free Groq key in the panel (Free AI key), or set up the Worker.' }, false, 400);
+  if (!CHAT_URL) return fakeRes({ error: 'Add a free AI key in the panel (Free AI key), or set up the Worker.' }, false, 400);
   const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
   return r;
 }
 async function brainSTT(blob) {
+  if (GKEY() && IS_GEM()) {
+    const ct = (blob.type || 'audio/webm').split(';')[0];
+    const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
+    return gemGenerate({ contents: [{ role: 'user', parts: [{ text: 'Transcribe this audio exactly as spoken. Reply with only the transcript, nothing else. If there is no speech, reply with nothing.' }, { inline_data: { mime_type: ct, data: b64 } }] }], generationConfig: { maxOutputTokens: 400, temperature: 0 } });
+  }
   if (GKEY()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
     const ext = ct.includes('webm') ? 'webm' : ct.includes('ogg') ? 'ogg' : ct.includes('wav') ? 'wav' : ct.includes('mpeg') ? 'mp3' : 'm4a';
@@ -966,7 +999,7 @@ const gg = (() => {
   const isBare = (q) => q.replace(/\b(?:please|jarvis|hey|ok|okay|i|want|would|like|to|can|you|could|me|a|an|the|my|new|write|draft|compose|send|create|prepare|make|start|open|e-?mail|mail|gmail|message|via|using|with|in|on|for|now)\b/gi, ' ').replace(/[^\p{L}\p{N}@.]+/gu, ' ').trim().split(/\s+/).filter(Boolean).length < 2;
   async function compose(q) {
     const box = $('#answer');
-    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs a free Groq key (panel: Free AI key).')); return; }
+    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs a free AI key (panel: Free AI key).')); return; }
     if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google (Calendar & Gmail panel) first, then ask again.')); return; }
     if (!canWrite) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "send email", then ask again.')); return; }
     if (isBare(q)) {                                                          // no recipient or topic given: open an empty draft to fill in
@@ -1014,7 +1047,7 @@ const gg = (() => {
   const hideEvent = () => { $('#evcard').hidden = true; };
   async function addEventDraft(q) {
     const box = $('#answer');
-    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Calendar events need a free Groq key (panel: Free AI key).')); return; }
+    if (!AI_READY()) { box.replaceChildren(el('span', 'muted', 'Calendar events need a free AI key (panel: Free AI key).')); return; }
     if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google first, then ask again.')); return; }
     if (!canCal) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "calendar events", then ask again.')); return; }
     chat.busy = true; orb.set('thinking');
@@ -1398,22 +1431,23 @@ const convo = (() => {
   if (!inp) return;
   const show = () => {
     const on = !!GKEY();
-    st.textContent = on ? 'Groq key saved in this browser. Jarvis uses it directly.' : 'Paste your free Groq key (starts with gsk_). It stays in this browser only.';
+    st.textContent = on ? 'Key saved in this browser (' + (IS_GEM() ? 'Google Gemini' : 'Groq') + '). Jarvis uses it directly.' : 'Paste a free Groq key (gsk_...) or Google Gemini key (AIza...). It stays in this browser only.';
     inp.value = ''; clr.hidden = !on;
   };
   btn.addEventListener('click', async () => {
     const k = inp.value.trim();
-    if (!/^gsk_[A-Za-z0-9]{20,}$/.test(k)) { toast('That does not look like a Groq key. It starts with gsk_'); return; }
+    if (!/^(gsk_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_\-]{20,})$/.test(k)) { toast('That does not look like a key. Groq keys start with gsk_, Google Gemini keys start with AIza'); return; }
     btn.disabled = true;
     try {
-      const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
-      if (!r.ok) throw new Error(r.status === 401 ? 'Groq says this key is not valid' : 'Groq error ' + r.status);
-      localStorage.setItem('brain.groq', k); groqModel = '';
+      const gem = /^AIza/.test(k);
+      const r = gem ? await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=5&key=' + encodeURIComponent(k)) : await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
+      if (!r.ok) throw new Error(r.status === 401 || r.status === 400 || r.status === 403 ? 'This key is not valid' : 'Key check failed (' + r.status + ')');
+      localStorage.setItem('brain.groq', k); groqModel = ''; gemModel = '';
       toast('Groq key works and is saved'); show();
     } catch (e) { toast(e.message === 'Failed to fetch' ? 'Could not reach Groq. Check your internet or VPN.' : e.message); }
     btn.disabled = false;
   });
-  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; show(); });
+  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; gemModel = ''; show(); });
   show();
 })();
 

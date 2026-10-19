@@ -90,3 +90,5 @@ Cloudflare's free allowance is 10,000 units a day. For a separate allowance, cre
 
 ## Free AI key in the browser (no Worker needed)
 Open the side panel, paste a free Groq key (https://console.groq.com/keys) under "Free AI key" and tap Save key. Answers, email drafts, calendar events and listening then run straight from your browser to Groq. The key is kept only in that browser and is never sent to this repo. The Worker is only used for the spoken AI voice.
+
+A Google Gemini key (starts with `AIza`, free at https://aistudio.google.com/apikey) works in the same box as a Groq key.

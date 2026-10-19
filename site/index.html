@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=28">
+<link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -45,8 +45,8 @@
     <label class="inline"><input type="checkbox" id="speak"> Read answers aloud</label>
     <label class="voice">Voice <select id="voice" aria-label="Jarvis voice"></select></label>
     <div class="gkbox">
-      <div class="clabel2">Free AI key (Groq)</div>
-      <input id="gkKey" type="password" placeholder="gsk_..." autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="clabel2">Free AI key (Groq or Gemini)</div>
+      <input id="gkKey" type="password" placeholder="gsk_... or AIza..." autocomplete="off" autocapitalize="off" spellcheck="false">
       <div class="grow"><button type="button" id="gkSave" class="gbtn">Save key</button><button type="button" id="gkClear" class="gbtn" hidden>Remove</button></div>
       <p id="gkStatus" class="voice"></p>
     </div>
@@ -110,7 +110,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=28"></script>
-<script src="app.js?v=28"></script>
+<script src="config.js?v=29"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>
