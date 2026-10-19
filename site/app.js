@@ -702,7 +702,7 @@ function speakLocal(clean) {
 /* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
 const gg = (() => {
   const CID = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.googleClientId) || '';
-  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events';
+  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly';
   let token = '', exp = 0, tc = null, at = 0, canWrite = false, canCal = false, contacts = [], contactsAt = 0;
   const data = { cal: '', mail: '', events: [], unread: null, from: [] };
   const live = () => !!token && Date.now() < exp - 30000;
@@ -772,20 +772,61 @@ const gg = (() => {
     while ((m = re.exec(str || ''))) { const email = (m[2] || m[3] || '').toLowerCase(), name = (m[1] || '').trim(); if (email) out.push({ email, name }); }
     return out;
   };
-  async function getContacts() {
-    if (contacts.length && Date.now() - contactsAt < 10 * 60000) return contacts;
+  let book = [], bookAt = 0, bookErr = '';
+  // Everyone in Google Contacts, plus people you have emailed before ("Other contacts"), loaded once and searched locally
+  async function loadBook() {
+    if (book.length && Date.now() - bookAt < 30 * 60000) return;
+    const out = new Map();
+    const add = (name, email) => { email = String(email || '').toLowerCase(); if (email && (!out.has(email) || (name && !out.get(email)))) out.set(email, name || ''); };
+    const pull = async (url, key) => {
+      let tok = '', n = 0;
+      do {
+        const j = await api(url + (tok ? '&pageToken=' + encodeURIComponent(tok) : ''));
+        for (const x of j[key] || []) for (const e of x.emailAddresses || []) add(((x.names || [])[0] || {}).displayName, e.value);
+        tok = j.nextPageToken || ''; n++;
+      } while (tok && n < 5);
+    };
+    bookErr = '';
+    await Promise.allSettled([
+      pull('https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses&pageSize=1000', 'connections').catch((e) => { bookErr = e.message; }),
+      pull('https://people.googleapis.com/v1/otherContacts?readMask=names,emailAddresses&pageSize=1000', 'otherContacts').catch((e) => { bookErr = bookErr || e.message; })
+    ]);
+    book = [...out].map(([email, name]) => ({ email, name }));
+    bookAt = Date.now();
+  }
+  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const STOP = new Set(['email','mail','send','write','draft','compose','that','the','and','for','with','about','please','tell','him','her','them','to','from','message','gmail','jarvis','ask','say','saying','regarding']);
+  async function getContacts(q) {
     const map = new Map();
     const add = (list) => list.forEach((a) => { if (!map.has(a.email) || (a.name && !map.get(a.email))) map.set(a.email, a.name); });
+    // 1) anyone in your Contacts / past correspondents whose name or address matches a word in the request
+    try { await loadBook(); } catch (e) { /* fall back to recent mail below */ }
+    const words = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
+    if (words.length && book.length) {
+      const hits = book.map((c) => { const hay = norm(c.name + ' ' + c.email); return { c, s: words.reduce((t, w) => t + (hay.includes(w) ? 1 : 0), 0) }; }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 25);
+      hits.forEach((x) => map.set(x.c.email, x.c.name));
+    }
+    // 2) recent senders and recipients
     data.from.forEach((f) => add(parseAddrs(f)));
-    try {
-      const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
-      const list = await api(base + 'messages?labelIds=SENT&maxResults=30');
-      const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=To').catch(() => null)));
-      msgs.forEach((m) => { if (m) add(parseAddrs(((m.payload.headers || []).find((h) => h.name.toLowerCase() === 'to') || {}).value)); });
-    } catch (e) { /* inbox senders alone are fine */ }
-    contacts = [...map].filter(([e]) => !/no-?reply|noreply|notifications?@/.test(e)).slice(0, 60).map(([e, n]) => (n ? n + ' <' + e + '>' : e));
-    contactsAt = Date.now();
-    return contacts;
+    if (!contacts.length || Date.now() - contactsAt > 10 * 60000) {
+      try {
+        const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
+        const list = await api(base + 'messages?labelIds=SENT&maxResults=30');
+        const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=To').catch(() => null)));
+        msgs.forEach((m) => { if (m) add(parseAddrs(((m.payload.headers || []).find((h) => h.name.toLowerCase() === 'to') || {}).value)); });
+      } catch (e) { /* inbox senders alone are fine */ }
+      contacts = [1]; contactsAt = Date.now();
+    }
+    // 3) if the name still matches nothing, ask Gmail itself
+    if (words.length && ![...map].some(([e, n]) => words.some((w) => norm(n + ' ' + e).includes(w)))) {
+      try {
+        const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
+        const list = await api(base + 'messages?maxResults=8&q=' + encodeURIComponent('(' + words.slice(0, 3).map((w) => 'from:' + w + ' OR to:' + w).join(' OR ') + ')'));
+        const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To').catch(() => null)));
+        msgs.forEach((m) => { if (m) (m.payload.headers || []).forEach((h) => add(parseAddrs(h.value).filter((a) => words.some((w) => norm(a.name + ' ' + a.email).includes(w))))); });
+      } catch (e) { /* ignore */ }
+    }
+    return [...map].filter(([e]) => !/no-?reply|noreply|notifications?@/.test(e)).slice(0, 60).map(([e, n]) => (n ? n + ' <' + e + '>' : e));
   }
   const b64 = (str) => { const by = new TextEncoder().encode(str); let bin = ''; by.forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); };
   const b64url = (str) => b64(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -843,7 +884,7 @@ const gg = (() => {
     chat.busy = true; orb.set('thinking');
     box.replaceChildren(el('span', 'muted', 'Writing the draft…'));
     try {
-      const list = await getContacts();
+      const list = await getContacts(q);
       const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ compose: q, contacts: list }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
@@ -951,7 +992,7 @@ const gg = (() => {
   }
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
-    token = ''; exp = 0; canWrite = false; canCal = false; contacts = []; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
+    token = ''; exp = 0; canWrite = false; canCal = false; contacts = []; book = []; bookAt = 0; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
     hideCompose();
     render();
   }
