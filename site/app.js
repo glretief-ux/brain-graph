@@ -995,7 +995,9 @@ const gg = (() => {
     } catch (e) { toast(e.message); }
     btns.forEach((b) => { b.disabled = false; });
   }
-  const isComposeRequest = (q) => !/^\s*(?:how|what|why|can you explain|explain)\b/i.test(q) && (/\b(?:write|draft|compose|send|create|prepare|make|start|open)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+|new\s+)*(?:new\s+)?(?:e-?mail|mail|gmail|message)\b/i.test(q) || /^\s*(?:(?:hey|ok|okay|please|jarvis)[\s,]+)*(?:e-?mail|mail)\s+\S/i.test(q));
+  const isComposeRequest = (q) => !/^\s*(?:how|what|why|can you explain|explain)\b/i.test(q) && !/\be-?mail\s+address\b/i.test(q) && (
+    /\b(?:write|draft|compose|send|prepare|create|make|start|open|shoot|fire off)\b(?:\s+[\w'@.-]+){0,5}?\s+(?:an?\s+|the\s+|my\s+|new\s+)*(?:new\s+)?(?:e-?mail|mail|gmail|message)\b/i.test(q) ||
+    /(?:^|\b(?:can you|could you|would you|will you|please|jarvis|hey|ok|okay|now)[\s,]+)(?:send\s+)?e-?mail\s+(?!address|me\b|messages?\b|inbox|from\b|today|about\s+my\b)\S/i.test(q));
   // "what is the email address of Anna", "find Anna's email": look the person up in Contacts and Gmail history
   const isLookup = (q) => /\b(?:e-?mail(?:\s+address)?|mail\s+address|address)\b/i.test(q) && /\b(?:what(?:'s| is)|find|look\s*up|search|get|give me|show|do you have|know|whose|who)\b/i.test(q) && !/\b(?:write|draft|compose|send)\b/i.test(q);
   async function lookupAddress(q) {
