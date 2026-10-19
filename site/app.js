@@ -826,12 +826,20 @@ const gg = (() => {
     } catch (e) { toast(e.message); }
     btns.forEach((b) => { b.disabled = false; });
   }
-  const isComposeRequest = (q) => /^\s*(?:(?:hey|ok|okay|please|jarvis)[\s,]+)*(?:(?:write|draft|compose|send|create|prepare)\s+(?:an?\s+|the\s+)?(?:e-?mail|mail|message)\b|e-?mail\s+\S|mail\s+(?:to\s+)?\S)/i.test(q);
+  const isComposeRequest = (q) => !/^\s*(?:how|what|why|can you explain|explain)\b/i.test(q) && (/\b(?:write|draft|compose|send|create|prepare|make|start|open)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+|new\s+)*(?:new\s+)?(?:e-?mail|mail|gmail|message)\b/i.test(q) || /^\s*(?:(?:hey|ok|okay|please|jarvis)[\s,]+)*(?:e-?mail|mail)\s+\S/i.test(q));
+  const isBare = (q) => q.replace(/\b(?:please|jarvis|hey|ok|okay|i|want|would|like|to|can|you|could|me|a|an|the|my|new|write|draft|compose|send|create|prepare|make|start|open|e-?mail|mail|gmail|message|via|using|with|in|on|for|now)\b/gi, ' ').replace(/[^\p{L}\p{N}@.]+/gu, ' ').trim().split(/\s+/).filter(Boolean).length < 2;
   async function compose(q) {
     const box = $('#answer');
     if (!CHAT_URL) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs the Cloudflare Worker (chat) to be set up.')); return; }
     if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google (Calendar & Gmail panel) first, then ask again.')); return; }
     if (!canWrite) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "send email", then ask again.')); return; }
+    if (isBare(q)) {                                                          // no recipient or topic given: open an empty draft to fill in
+      const f0 = cf(); f0.to.value = ''; f0.subj.value = ''; f0.body.value = '';
+      $('#compose').hidden = false; panel.classList.remove('closed');
+      $('#compose').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const m0 = 'Who is it for and what should it say? Type it in the form, or ask me again, for example: email Anna that the meeting moved to Thursday.';
+      box.replaceChildren(el('span', null, m0)); say(m0); return;
+    }
     chat.busy = true; orb.set('thinking');
     box.replaceChildren(el('span', 'muted', 'Writing the draft…'));
     try {
