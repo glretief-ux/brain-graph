@@ -44,7 +44,10 @@ async function cfChat(env, messages, max_tokens) {
 async function freeChat(env, messages, max_tokens) {
   let err;
   if (env.GROQ_API_KEY) { try { const t = await groqChat(env, messages, max_tokens); if (t) return t; } catch (e) { err = e; } }
-  if (env.AI) return cfChat(env, messages, max_tokens);
+  if (env.AI) {
+    try { return await cfChat(env, messages, max_tokens); }
+    catch (e2) { throw new Error((err ? "Groq: " + err.message + " | " : "") + "Cloudflare: " + (e2 && e2.message ? e2.message : "error")); }
+  }
   throw err || new Error("No free AI configured");
 }
 async function groqSTT(env, buf, ctype) {
@@ -82,9 +85,10 @@ export default {
       if (!env.AI && !env.GROQ_API_KEY) return json({ error: "Voice needs GROQ_API_KEY or the Workers AI binding named AI" }, 500, cors);
       const buf = await req.arrayBuffer();
       if (!buf.byteLength || buf.byteLength > 6 * 1024 * 1024) return json({ error: "Audio empty or too long" }, 400, cors);
+      let gErr = null;
       if (env.GROQ_API_KEY) {
         try { return json({ text: await groqSTT(env, buf, ctype) }, 200, cors); }
-        catch (e) { if (!env.AI) return json({ error: "Transcription error: " + (e && e.message ? e.message : "unknown") }, 502, cors); }
+        catch (e) { if (!env.AI) return json({ error: "Transcription error: " + (e && e.message ? e.message : "unknown") }, 502, cors); gErr = e; }
       }
       try {
         const bytes = new Uint8Array(buf);
@@ -93,7 +97,7 @@ export default {
         const out = await env.AI.run(env.STT_MODEL || "@cf/openai/whisper-large-v3-turbo", { audio: btoa(bin) });
         return json({ text: String((out && out.text) || "").trim() }, 200, cors);
       } catch (e) {
-        return json({ error: "Transcription error: " + (e && e.message ? e.message : "unknown") }, 502, cors);
+        return json({ error: "Transcription error: " + (gErr ? "Groq: " + gErr.message + " | " : "") + (e && e.message ? e.message : "unknown") }, 502, cors);
       }
     }
 
