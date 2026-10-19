@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=19">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -55,6 +55,17 @@
       <button type="button" id="gRefresh" class="gbtn" hidden>Refresh</button>
       <button type="button" id="gOut" class="gbtn" hidden>Sign out</button>
     </div>
+    <div id="compose" hidden>
+      <div class="clabel">Draft email (nothing is sent until you tap Send)</div>
+      <input id="cTo" type="email" placeholder="To (email address)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="cSubj" type="text" placeholder="Subject" autocomplete="off">
+      <textarea id="cBody" rows="8" placeholder="Message"></textarea>
+      <div class="grow">
+        <button type="button" id="cSend" class="gbtn">Send</button>
+        <button type="button" id="cSave" class="gbtn">Save draft</button>
+        <button type="button" id="cCancel" class="gbtn">Discard</button>
+      </div>
+    </div>
   </section>
 
   <section>
@@ -80,7 +91,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=17"></script>
-<script src="app.js?v=17"></script>
+<script src="config.js?v=19"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

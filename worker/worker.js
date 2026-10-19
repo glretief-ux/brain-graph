@@ -59,6 +59,43 @@ export default {
     let body;
     try { body = await req.json(); } catch { return json({ error: "Bad JSON" }, 400, cors); }
 
+    // Email drafting: the page sends {compose, contacts}; we answer with {draft:{to,subject,body}}. Nothing is sent from here.
+    if (body.compose) {
+      const request = String(body.compose).slice(0, 1000);
+      const contacts = (Array.isArray(body.contacts) ? body.contacts : []).slice(0, 60).map((c) => String(c).slice(0, 120)).join("\n");
+      const sys = `You write email drafts for the user. Reply with ONLY a JSON object: {"to":"","subject":"","body":""}.
+"to" must be ONE email address: copy it from the CONTACTS list when a name in the request matches a contact, or use an address the request spells out. If nothing matches, leave "to" empty. Never invent an address.
+Write the email in the same language as the request unless asked otherwise. Short, polite and natural, in the first person as the user, with a greeting and a closing line. No placeholders like [Your name] and no text outside the JSON.
+
+CONTACTS:
+${contacts || "(none)"}`;
+      try {
+        let text = "";
+        if (env.ANTHROPIC_API_KEY) {
+          const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: env.MODEL || "claude-sonnet-5-5", max_tokens: 700, system: sys, messages: [{ role: "user", content: request }] }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ error: (d.error && d.error.message) || "Claude API error" }, 502, cors);
+          text = (d.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+        } else {
+          const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", {
+            messages: [{ role: "system", content: sys }, { role: "user", content: request }],
+            max_tokens: 600,
+          });
+          text = String((out && (out.response || out.result)) || "");
+        }
+        const m = text.match(/\{[\s\S]*\}/);
+        const d = m ? JSON.parse(m[0]) : null;
+        if (!d || !d.body) return json({ error: "Could not write a draft, try rephrasing" }, 502, cors);
+        return json({ draft: { to: String(d.to || "").slice(0, 200), subject: String(d.subject || "").slice(0, 200), body: String(d.body).slice(0, 5000) } }, 200, cors);
+      } catch (e) {
+        return json({ error: "Draft error: " + (e && e.message ? e.message : "unknown") }, 502, cors);
+      }
+    }
+
     // Voice out: the page sends {speak, speaker}; we answer with an MP3 (Deepgram Aura-2 on Workers AI)
     if (body.speak) {
       if (!env.AI) return json({ error: "Voice needs the Workers AI binding named AI" }, 500, cors);

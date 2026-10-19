@@ -65,7 +65,7 @@ Pick a voice under "Read answers aloud". **Jarvis AI voice (best)** uses Deepgra
 ## 3D view
 The graph is 3D by default: drag empty space to rotate, pinch or scroll to zoom, drag a note to move it, and it slowly spins when idle. The **3D** button flattens it back to the classic 2D layout. Shift+drag pans in 3D.
 
-## Calendar & Gmail (read only)
+## Calendar & Gmail
 The "Calendar & Gmail" panel signs you in with Google inside your browser. Nothing is stored in the repo or on the Worker. When you ask Jarvis about your calendar or mail, the relevant text is sent along with that one question to your Worker's AI to answer it, then forgotten.
 
 One-time setup (free):
@@ -75,3 +75,6 @@ One-time setup (free):
 4. Credentials -> Create credentials -> **OAuth client ID** -> Web application -> Authorized JavaScript origin: `https://glretief-ux.github.io` -> Create.
 5. Copy the Client ID (it ends in `.apps.googleusercontent.com`) into `site/config.js` as `googleClientId`.
 Google shows an "unverified app" warning because it is your own test app: Advanced -> continue.
+
+### Writing email
+Say or type "Email Anna that the meeting moved to Thursday". Jarvis finds the address among people you recently emailed, writes the draft and shows it in the panel. **Nothing is sent until you tap Send**; you can edit the text first, **Save draft** (goes to your Gmail Drafts) or **Discard**. This needs the latest `worker/worker.js` (it adds a draft mode) and the Gmail "compose" permission, which Google asks for the next time you tap Connect Google.

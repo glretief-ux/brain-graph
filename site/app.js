@@ -693,9 +693,9 @@ function speakLocal(clean) {
 /* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
 const gg = (() => {
   const CID = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.googleClientId) || '';
-  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly';
-  let token = '', exp = 0, tc = null, at = 0;
-  const data = { cal: '', mail: '', events: [], unread: null };
+  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose';
+  let token = '', exp = 0, tc = null, at = 0, canWrite = false, contacts = [], contactsAt = 0;
+  const data = { cal: '', mail: '', events: [], unread: null, from: [] };
   const live = () => !!token && Date.now() < exp - 30000;
   const when = (d, opt) => d.toLocaleString('en-GB', opt);
   const short = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
@@ -746,7 +746,107 @@ const gg = (() => {
       const unread = (m.labelIds || []).includes('UNREAD');
       return '- ' + (unread ? '[unread] ' : '') + from + ' (' + when(new Date(+m.internalDate), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '): ' + short(hv(m, 'subject'), 70) + ' | ' + short(m.snippet, 70);
     });
+    data.from = msgs.map((m) => hv(m, 'from'));
     data.mail = ('Gmail inbox: ' + data.unread + ' unread. Latest messages:\n' + out.join('\n')).slice(0, 1150);
+  }
+
+  async function apiPost(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 401) { token = ''; throw new Error('Google sign-in expired. Tap Connect Google again.'); }
+    if (r.status === 403) throw new Error('Google refused. Tap Sign out, then Connect Google and allow "send email".');
+    if (!r.ok) throw new Error('Google error ' + r.status);
+    return r.json();
+  }
+  const parseAddrs = (str) => {
+    const out = [], re = /(?:"?([^"<>,]*?)"?\s*)?<([^<>\s]+@[^<>\s]+)>|([^\s,<>"]+@[^\s,<>"]+)/g;
+    let m;
+    while ((m = re.exec(str || ''))) { const email = (m[2] || m[3] || '').toLowerCase(), name = (m[1] || '').trim(); if (email) out.push({ email, name }); }
+    return out;
+  };
+  async function getContacts() {
+    if (contacts.length && Date.now() - contactsAt < 10 * 60000) return contacts;
+    const map = new Map();
+    const add = (list) => list.forEach((a) => { if (!map.has(a.email) || (a.name && !map.get(a.email))) map.set(a.email, a.name); });
+    data.from.forEach((f) => add(parseAddrs(f)));
+    try {
+      const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
+      const list = await api(base + 'messages?labelIds=SENT&maxResults=30');
+      const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=To').catch(() => null)));
+      msgs.forEach((m) => { if (m) add(parseAddrs(((m.payload.headers || []).find((h) => h.name.toLowerCase() === 'to') || {}).value)); });
+    } catch (e) { /* inbox senders alone are fine */ }
+    contacts = [...map].filter(([e]) => !/no-?reply|noreply|notifications?@/.test(e)).slice(0, 60).map(([e, n]) => (n ? n + ' <' + e + '>' : e));
+    contactsAt = Date.now();
+    return contacts;
+  }
+  const b64 = (str) => { const by = new TextEncoder().encode(str); let bin = ''; by.forEach((b) => { bin += String.fromCharCode(b); }); return btoa(bin); };
+  const b64url = (str) => b64(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  function rawMessage(to, subject, body) {
+    const clean = (t) => String(t).replace(/[\r\n]+/g, ' ').trim();
+    return [
+      'To: ' + clean(to),
+      'Subject: =?UTF-8?B?' + b64(clean(subject) || '(no subject)') + '?=',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      (b64(body.replace(/\r?\n/g, '\r\n')).match(/.{1,76}/g) || []).join('\r\n')
+    ].join('\r\n');
+  }
+  const validTo = (t) => /^[^\s<>,;"]+@[^\s<>,;"]+\.[^\s<>,;"]+$/.test(t.trim());
+  const cf = () => ({ to: $('#cTo'), subj: $('#cSubj'), body: $('#cBody') });
+  function hideCompose() { $('#compose').hidden = true; }
+  async function act(kind) {
+    const f = cf(), to = f.to.value.trim(), body = f.body.value;
+    if (!validTo(to)) { toast('Type one valid email address in the To box first'); f.to.focus(); return; }
+    if (!body.trim()) { toast('The message is empty'); return; }
+    if (!live()) { toast('Google sign-in expired. Tap Connect Google again.'); return; }
+    if (!canWrite) { toast('Tap Sign out, then Connect Google again and allow "send email".'); return; }
+    const btns = ['#cSend', '#cSave', '#cCancel'].map((x) => $(x));
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      const raw = b64url(rawMessage(to, f.subj.value, body));
+      if (kind === 'send') {
+        await apiPost('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { raw });
+        toast('Email sent to ' + to);
+        say('Sent.');
+      } else {
+        await apiPost('https://gmail.googleapis.com/gmail/v1/users/me/drafts', { message: { raw } });
+        toast('Saved to your Gmail drafts');
+      }
+      hideCompose();
+    } catch (e) { toast(e.message); }
+    btns.forEach((b) => { b.disabled = false; });
+  }
+  const isComposeRequest = (q) => /^\s*(?:(?:hey|ok|okay|please|jarvis)[\s,]+)*(?:(?:write|draft|compose|send|create|prepare)\s+(?:an?\s+|the\s+)?(?:e-?mail|mail|message)\b|e-?mail\s+\S|mail\s+(?:to\s+)?\S)/i.test(q);
+  async function compose(q) {
+    const box = $('#answer');
+    if (!CHAT_URL) { box.replaceChildren(el('span', 'muted', 'Drafting emails needs the Cloudflare Worker (chat) to be set up.')); return; }
+    if (!live()) { box.replaceChildren(el('span', 'muted', 'Tap Connect Google (Calendar & Gmail panel) first, then ask again.')); return; }
+    if (!canWrite) { box.replaceChildren(el('span', 'muted', 'Tap Sign out, then Connect Google again and allow "send email", then ask again.')); return; }
+    chat.busy = true; orb.set('thinking');
+    box.replaceChildren(el('span', 'muted', 'Writing the draft…'));
+    try {
+      const list = await getContacts();
+      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ compose: q, contacts: list }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
+      const f = cf();
+      const addr = parseAddrs(d.draft.to)[0];
+      f.to.value = addr ? addr.email : '';
+      f.subj.value = d.draft.subject || '';
+      f.body.value = d.draft.body || '';
+      $('#compose').hidden = false;
+      panel.classList.remove('closed');
+      $('#compose').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const who = addr ? (addr.name || addr.email) : '';
+      const msg = who ? 'Draft ready for ' + who + '. Check it, then tap Send.' : 'Draft ready, but I could not find the address. Type it in the To box, then tap Send.';
+      box.replaceChildren(el('span', null, msg));
+      orb.set('idle');
+      say(msg);
+    } catch (e) {
+      box.replaceChildren(el('span', 'err', 'Could not write the draft: ' + e.message));
+      orb.set('idle');
+    } finally { chat.busy = false; }
   }
 
   function render(msg) {
@@ -755,7 +855,7 @@ const gg = (() => {
     $('#gConnect').hidden = on; $('#gRefresh').hidden = !on; $('#gOut').hidden = !on;
     ag.replaceChildren();
     if (!CID) { st.textContent = 'Needs a Google client ID in site/config.js (see the README).'; $('#gConnect').hidden = true; return; }
-    st.textContent = msg || (on ? 'Connected (read only). Ask Jarvis: "What is on my calendar today?" or "Any new emails?"' : 'Not connected. Your calendar and Gmail are read live in this browser and never saved.');
+    st.textContent = msg || (on ? 'Connected. Ask Jarvis: "What is on my calendar today?", "Any new emails?" or "Email Anna that the meeting moved to Thursday". Nothing is sent until you tap Send.' : 'Not connected. Your calendar and Gmail are read live in this browser and never saved.');
     if (!on) return;
     const upcoming = data.events.filter((e) => e.en > new Date()).slice(0, 4);
     for (const e of upcoming) {
@@ -783,6 +883,7 @@ const gg = (() => {
       callback: (r) => {
         if (r.error) { toast('Google: ' + (r.error_description || r.error)); return; }
         token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000;
+        canWrite = String(r.scope || '').includes('gmail.compose');
         refresh();
       },
       error_callback: (e) => toast('Google sign-in ' + ((e && e.type) || 'failed').replace(/_/g, ' '))
@@ -791,7 +892,8 @@ const gg = (() => {
   }
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
-    token = ''; exp = 0; data.cal = data.mail = ''; data.events = []; data.unread = null;
+    token = ''; exp = 0; canWrite = false; contacts = []; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
+    hideCompose();
     render();
   }
   function init() {
@@ -803,6 +905,9 @@ const gg = (() => {
     $('#gConnect').addEventListener('click', connect);
     $('#gRefresh').addEventListener('click', refresh);
     $('#gOut').addEventListener('click', signOut);
+    $('#cSend').addEventListener('click', () => act('send'));
+    $('#cSave').addEventListener('click', () => act('draft'));
+    $('#cCancel').addEventListener('click', hideCompose);
   }
   // Extra notes for Jarvis, only when the question is about calendar or mail
   async function notesFor(q) {
@@ -816,11 +921,12 @@ const gg = (() => {
     if (wantMail && data.mail) out.push({ title: 'Your Gmail inbox', type: 'google', text: data.mail });
     return out;
   }
-  return { init, notesFor, live };
+  return { init, notesFor, live, compose, isComposeRequest };
 })();
 
 async function ask(question) {
   if (chat.busy || !question) return;
+  if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
   const box = $('#answer');
   if (!CHAT_URL) {                                              // free search mode
     const a = localAnswer(question);
