@@ -11,7 +11,7 @@
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
 //   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct-fp8)
 //   TTS_MODEL          free text-to-speech model (default: @cf/deepgram/aura-2-en)
-//   GROQ_MODEL         Groq chat model (default: llama-3.3-70b-versatile)
+//   GROQ_MODEL         Groq chat model (default: picked automatically from what your key can use)
 //   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
@@ -26,13 +26,28 @@ Whenever you mention a note, write its exact title in double square brackets, li
 Never invent details that are not in the notes.`;
 
 // ---- Groq (free tier, separate daily allowance from Cloudflare) ----
+let groqPicked = null;
+// Ask Groq which chat models this key can use, and pick a good one (models get renamed over time)
+async function groqPick(env) {
+  const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: "Bearer " + env.GROQ_API_KEY } });
+  const d = await r.json().catch(() => ({}));
+  const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
+  const prefer = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+  return prefer.find((m) => ids.includes(m)) || ids[0] || null;
+}
 async function groqChat(env, messages, max_tokens) {
-  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const call = (model) => fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: "Bearer " + env.GROQ_API_KEY },
-    body: JSON.stringify({ model: env.GROQ_MODEL || "llama-3.3-70b-versatile", messages, max_tokens, temperature: 0.3 }),
+    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 }),
   });
-  const d = await r.json().catch(() => ({}));
+  let model = env.GROQ_MODEL || groqPicked || "llama-3.1-8b-instant";
+  let r = await call(model);
+  let d = await r.json().catch(() => ({}));
+  if (!r.ok && /model/i.test((d.error && d.error.message) || "")) {          // wrong or retired model: find one that works
+    const alt = await groqPick(env);
+    if (alt && alt !== model) { groqPicked = alt; r = await call(alt); d = await r.json().catch(() => ({})); }
+  }
   if (!r.ok) throw new Error((d.error && d.error.message) || "Groq error " + r.status);
   return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").trim();
 }
