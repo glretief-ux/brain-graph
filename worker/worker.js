@@ -228,8 +228,8 @@ ${contacts || "(none)"}`;
     if (!question) return json({ error: "Empty question" }, 400, cors);
 
     const useClaude = Boolean(env.ANTHROPIC_API_KEY);
-    const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, useClaude || env.GROQ_API_KEY ? 25 : 10);
-    const textCap = useClaude || env.GROQ_API_KEY ? 2500 : 1200; // free model gets a smaller context
+    const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, useClaude ? 25 : 9);
+    const textCap = useClaude ? 2500 : 1000; // free model gets a smaller context
     const context = notes
       .map((n) => `## ${String(n.title).slice(0, 120)} (${String(n.type).slice(0, 30)})\n${String(n.text).slice(0, textCap)}`)
       .join("\n\n");
