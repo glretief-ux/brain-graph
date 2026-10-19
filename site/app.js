@@ -914,7 +914,7 @@ function initChat() {
 
 /* ---------- hands-free conversation (needs the Worker for speech-to-text) ---------- */
 const convo = (() => {
-  let on = false, stream = null, ctx = null;
+  let on = false, stream = null, ctx = null, lastPeak = 0;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const supported = () => !!(CHAT_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
@@ -930,16 +930,25 @@ const convo = (() => {
     const stopped = new Promise((r) => { rec.onstop = r; });
     rec.start();
     const t0 = performance.now();
-    let floor = 0.01, n = 0, spoke = false, lastVoice = 0;
+    let sum = 0, n = 0, thr = 0.02, spoke = false, lastVoice = 0, peak = 0;
+    const lab = document.getElementById('orbState');
+    const bar = (v) => '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor(v / 0.06 * 8))];
     while (on) {
       await sleep(60);
       const now = performance.now(), lv = level();
-      if (now - t0 < 500) { floor = Math.max(floor, lv); continue; }    // measure room noise first
-      if (lv > floor * 2.5 + 0.015) { spoke = true; lastVoice = now; }
+      peak = Math.max(peak, lv);
+      if (lab && orb.get() === 'listening') lab.textContent = 'LISTENING ' + bar(lv) + bar(peak);
+      if (now - t0 < 450) {                                               // measure room noise first
+        sum += Math.min(lv, 0.03); n++;
+        thr = Math.max((sum / n) * 3, (sum / n) + 0.01, 0.012);
+        continue;
+      }
+      if (lv > thr) { spoke = true; lastVoice = now; }
       if (spoke && now - lastVoice > 1300) break;                         // paused: done
       if (!spoke && now - t0 > 12000) break;                              // nobody spoke
       if (now - t0 > 30000) break;
     }
+    lastPeak = peak;
     rec.stop(); await stopped; src.disconnect();
     return spoke && on ? new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }) : null;
   }
@@ -957,7 +966,11 @@ const convo = (() => {
       let clip;
       try { clip = await record(); } catch (e) { toast('Recording failed: ' + e.message); break; }
       if (!on) break;
-      if (!clip) { toast('Jarvis stopped listening. Tap the orb to talk again.'); break; }
+      if (!clip) {
+        const dev = stream && stream.getAudioTracks()[0] ? stream.getAudioTracks()[0].label : 'unknown microphone';
+        toast(lastPeak < 0.004 ? 'Mic "' + dev + '" is silent. Check Windows sound input or pick another mic in Chrome (lock icon).' : 'Did not catch speech (mic "' + dev + '"). Tap the orb and try again.');
+        break;
+      }
       orb.set('thinking');
       let text = '';
       try { text = await transcribe(clip); } catch (e) { toast(e.message); break; }
@@ -974,8 +987,11 @@ const convo = (() => {
   async function start() {
     if (on) return;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    } catch (e) { toast('Microphone blocked: allow it in Safari (Website Settings, Microphone)'); return false; }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } catch (e) {
+      toast(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
+      return false;
+    }
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await ctx.resume(); } catch (e) {}
     on = true; $('#speak').checked = true;
