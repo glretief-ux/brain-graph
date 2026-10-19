@@ -924,6 +924,9 @@ const gg = (() => {
   }
   const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const STOP = new Set(['email','mail','send','write','draft','compose','that','the','and','for','with','about','please','tell','him','her','them','to','from','message','gmail','jarvis','ask','say','saying','regarding']);
+  const lev1 = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return d + (a.length - i) + (b.length - j) <= 1; };
+  // word matches a contact's name/address: exact piece, or one letter off (Elize / Elise)
+  const hit = (hay, w) => hay.includes(w) || (w.length >= 4 && hay.split(/[^a-z0-9]+/).some((t) => t.length >= 4 && lev1(t, w)));
   async function getContacts(q) {
     const map = new Map();
     const add = (list) => list.forEach((a) => { if (!map.has(a.email) || (a.name && !map.get(a.email))) map.set(a.email, a.name); });
@@ -931,7 +934,7 @@ const gg = (() => {
     try { await loadBook(); } catch (e) { /* fall back to recent mail below */ }
     const words = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
     if (words.length && book.length) {
-      const hits = book.map((c) => { const hay = norm(c.name + ' ' + c.email); return { c, s: words.reduce((t, w) => t + (hay.includes(w) ? 1 : 0), 0) }; }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 25);
+      const hits = book.map((c) => { const hay = norm(c.name + ' ' + c.email); return { c, s: words.reduce((t, w) => t + (hit(hay, w) ? 1 : 0), 0) }; }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 25);
       hits.forEach((x) => map.set(x.c.email, x.c.name));
     }
     // 2) recent senders and recipients
@@ -946,12 +949,12 @@ const gg = (() => {
       contacts = [1]; contactsAt = Date.now();
     }
     // 3) if the name still matches nothing, ask Gmail itself
-    if (words.length && ![...map].some(([e, n]) => words.some((w) => norm(n + ' ' + e).includes(w)))) {
+    if (words.length && ![...map].some(([e, n]) => words.some((w) => hit(norm(n + ' ' + e), w)))) {
       try {
         const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
         const list = await api(base + 'messages?maxResults=8&q=' + encodeURIComponent('(' + words.slice(0, 3).map((w) => 'from:' + w + ' OR to:' + w).join(' OR ') + ')'));
         const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=From&metadataHeaders=To').catch(() => null)));
-        msgs.forEach((m) => { if (m) (m.payload.headers || []).forEach((h) => add(parseAddrs(h.value).filter((a) => words.some((w) => norm(a.name + ' ' + a.email).includes(w))))); });
+        msgs.forEach((m) => { if (m) (m.payload.headers || []).forEach((h) => add(parseAddrs(h.value).filter((a) => words.some((w) => hit(norm(a.name + ' ' + a.email), w))))); });
       } catch (e) { /* ignore */ }
     }
     return [...map].filter(([e]) => !/no-?reply|noreply|notifications?@/.test(e)).slice(0, 60).map(([e, n]) => (n ? n + ' <' + e + '>' : e));
@@ -1012,7 +1015,7 @@ const gg = (() => {
       const seen = new Set(), hits = [];
       for (const c of pool) {
         if (seen.has(c.email)) continue;
-        const hay = norm(c.name + ' ' + c.email), sc = ws.reduce((t, w) => t + (hay.includes(w) ? 1 : 0), 0);
+        const hay = norm(c.name + ' ' + c.email), sc = ws.reduce((t, w) => t + (hit(hay, w) ? 1 : 0), 0);
         if (ws.length && sc > 0) { seen.add(c.email); hits.push({ c, sc }); }
       }
       hits.sort((a, b) => b.sc - a.sc);
@@ -1045,12 +1048,15 @@ const gg = (() => {
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
       const f = cf();
-      let addr = parseAddrs(d.draft.to)[0];
-      if (!addr) {                                                         // the AI missed it: match the names in the request ourselves
-        const ws = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
-        const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
-        const best = pool.map((c) => ({ c, s: ws.reduce((t, w) => t + (norm(c.name + ' ' + c.email).includes(w) ? 1 : 0), 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s)[0];
-        if (best) addr = { name: best.c.name, email: best.c.email };
+      // pick the recipient ourselves: the best local match for the names in the request wins; the AI's guess is only trusted if it was spelled out or really matches a name
+      const ws = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
+      const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
+      const scored = pool.map((c) => ({ c, s: ws.reduce((t, w) => t + (hit(norm(c.name + ' ' + c.email), w) ? 1 : 0), 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+      let addr = scored.length ? { name: scored[0].c.name, email: scored[0].c.email } : null;
+      if (!addr) {
+        const ai = parseAddrs(d.draft.to)[0];
+        const typed = ai && norm(q).includes(ai.email);
+        if (typed) addr = ai;
       }
       f.to.value = addr ? addr.email : '';
       f.subj.value = d.draft.subject || '';
