@@ -584,8 +584,16 @@ function initChat() {
     orb.el.addEventListener('click', () => { panel.classList.remove('closed'); input.focus(); toast('Voice input is not supported in this browser. Type instead.'); });
     return;
   }
+  let voiceBroken = false;
+  const typeInstead = () => {
+    panel.classList.remove('closed');
+    $('#speak').checked = true;
+    input.focus();
+    toast('Tap the mic key on the keyboard, speak, then press Send');
+  };
   const startListening = () => {
     if (orb.get() === 'listening') return;
+    if (voiceBroken) { typeInstead(); return; }
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     const rec = new SR();
     rec.lang = navigator.language || 'en-US';
@@ -594,14 +602,11 @@ function initChat() {
     rec.onstart = () => orb.set('listening');
     rec.onresult = (ev) => { const t = ev.results[0][0].transcript; input.value = ''; ask(t); };
     rec.onerror = (ev) => {
-      const hints = {
-        'not-allowed': 'Microphone blocked. Safari: aA menu, Website Settings, Microphone, Allow',
-        'service-not-allowed': 'Turn on Dictation: Settings, General, Keyboard, Enable Dictation',
-        'no-speech': 'Did not hear anything, try again',
-        'audio-capture': 'No microphone found',
-        'network': 'Speech service needs internet'
-      };
-      toast(hints[ev.error] || ('Voice input failed: ' + (ev.error || 'unknown') + '. Tip: use the keyboard mic key instead'));
+      if (ev.error === 'no-speech') { toast('Did not hear anything, try again'); return; }
+      if (ev.error === 'network') { toast('Speech service needs internet'); return; }
+      // Safari often refuses web speech even with Dictation on: switch to the keyboard mic for good
+      voiceBroken = true;
+      typeInstead();
     };
     rec.onend = () => { mic.classList.remove('on'); if (orb.get() === 'listening') orb.set('idle'); };
     try { rec.start(); } catch (e) { mic.classList.remove('on'); orb.set('idle'); }
