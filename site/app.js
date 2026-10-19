@@ -1049,6 +1049,7 @@ const convo = (() => {
     try { localStorage.setItem('brain.mic', id || ''); } catch (e) {}
     await listMics();
   }
+  const say2 = (m) => { toast(m); const el = document.getElementById('voiceStatus'); if (el) el.textContent = m; };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const supported = () => !!(CHAT_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
@@ -1098,7 +1099,7 @@ const convo = (() => {
     while (on) {
       orb.set('listening');
       let clip;
-      try { clip = await record(); } catch (e) { toast('Recording failed: ' + e.message); break; }
+      try { clip = await record(); } catch (e) { say2('Recording failed: ' + e.message); break; }
       if (!on) break;
       if (!clip) {
         const dev = stream && stream.getAudioTracks()[0] ? stream.getAudioTracks()[0].label : 'unknown microphone';
@@ -1106,15 +1107,15 @@ const convo = (() => {
           const all = await listMics();
           const next = all.find((d) => !tried.has(d.deviceId));
           if (next) {
-            try { await useMic(next.deviceId); toast('Mic "' + dev + '" was silent. Trying "' + (next.label || 'next microphone') + '".'); continue; } catch (e) {}
+            try { await useMic(next.deviceId); say2('Mic "' + dev + '" was silent. Trying "' + (next.label || 'next microphone') + '".'); continue; } catch (e) {}
           }
-          toast('No microphone picked up sound (last tried "' + dev + '"). Choose another under Microphone in the panel, or check Windows Sound > Input.');
-        } else toast('Did not catch speech (mic "' + dev + '"). Tap the orb and try again.');
+          say2('No microphone picked up sound (last tried "' + dev + '"). Choose another under Microphone in the panel, or check Windows Sound > Input.');
+        } else say2('Did not catch speech (mic "' + dev + '"). Tap the orb and try again.');
         break;
       }
-      orb.set('thinking');
+      orb.set('thinking'); say2('Heard you, working on it…');
       let text = '';
-      try { text = await transcribe(clip); } catch (e) { toast(e.message); break; }
+      try { text = await transcribe(clip); } catch (e) { say2(e.message); break; }
       if (!text.trim()) continue;
       $('#askInput').value = '';
       await ask(text.trim());
@@ -1133,12 +1134,12 @@ const convo = (() => {
       const id0 = stream.getAudioTracks()[0].getSettings().deviceId; if (id0) tried.add(id0);
       listMics();
     } catch (e) {
-      toast(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
+      say2(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
       return false;
     }
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await ctx.resume(); } catch (e) {}
-    on = true; $('#speak').checked = true;
+    on = true; $('#speak').checked = true; say2('Listening… speak now.');
     orb.el.classList.add('live');
     loop();
     return true;
@@ -1155,7 +1156,7 @@ const convo = (() => {
   }
   document.addEventListener('change', async (e) => {
     if (e.target && e.target.id === 'mic') {
-      if (on && stream) { try { tried = new Set(); await useMic(e.target.value); toast('Microphone changed'); } catch (err) { toast('Could not use that microphone'); } }
+      if (on && stream) { try { tried = new Set(); await useMic(e.target.value); say2('Microphone changed'); } catch (err) { say2('Could not use that microphone'); } }
       else { try { localStorage.setItem('brain.mic', e.target.value); } catch (err) {} }
     }
   });
