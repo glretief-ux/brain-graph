@@ -8,6 +8,7 @@
 //   ALLOWED_ORIGIN     comma-separated sites allowed to call this (default: your GitHub Pages site)
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
 //   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct)
+//   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
 
@@ -36,6 +37,23 @@ export default {
     if (req.method !== "POST") return json({ error: "POST only" }, 405, cors);
     if (!okOrigin) return json({ error: "Origin not allowed" }, 403, cors);
     if (!env.ANTHROPIC_API_KEY && !env.AI) return json({ error: "Worker has no AI binding (free) or ANTHROPIC_API_KEY secret yet" }, 500, cors);
+
+    // Voice: the page posts a short audio clip, we answer with the transcript (free Whisper on Workers AI)
+    const ctype = req.headers.get("Content-Type") || "";
+    if (ctype.startsWith("audio/") || ctype.startsWith("video/")) {
+      if (!env.AI) return json({ error: "Voice needs the Workers AI binding named AI" }, 500, cors);
+      const buf = await req.arrayBuffer();
+      if (!buf.byteLength || buf.byteLength > 6 * 1024 * 1024) return json({ error: "Audio empty or too long" }, 400, cors);
+      try {
+        const bytes = new Uint8Array(buf);
+        let bin = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        const out = await env.AI.run(env.STT_MODEL || "@cf/openai/whisper-large-v3-turbo", { audio: btoa(bin) });
+        return json({ text: String((out && out.text) || "").trim() }, 200, cors);
+      } catch (e) {
+        return json({ error: "Transcription error: " + (e && e.message ? e.message : "unknown") }, 502, cors);
+      }
+    }
 
     let body;
     try { body = await req.json(); } catch { return json({ error: "Bad JSON" }, 400, cors); }

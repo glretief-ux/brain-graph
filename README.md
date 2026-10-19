@@ -47,6 +47,8 @@ Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers 
 ## J.A.R.V.I.S. orb
 The glowing ring top-right shows what Jarvis is doing (standby, listening, thinking, speaking). **Tap it to talk**; answers are read aloud.
 
+**Hands-free mode** (needs the free Worker above, redeployed with the latest `worker/worker.js`): tap the orb once. It listens, notices when you pause, transcribes with free Whisper on Workers AI, answers out loud, then listens again. Tap the orb to stop; it also stops itself after 12 seconds of silence. Browsers always need that first tap to open the microphone.
+
 ## Controls
 | Action | Touch | Mouse |
 |---|---|---|

@@ -613,8 +613,94 @@ function initChat() {
   };
   mic.addEventListener('click', startListening);
   // Tapping the orb = talk to Jarvis, and Jarvis talks back
-  orb.el.addEventListener('click', () => { $('#speak').checked = true; startListening(); });
+  orb.el.addEventListener('click', () => {
+    if (convo.supported()) { convo.toggle(); return; }
+    $('#speak').checked = true; startListening();
+  });
 }
+
+/* ---------- hands-free conversation (needs the Worker for speech-to-text) ---------- */
+const convo = (() => {
+  let on = false, stream = null, ctx = null;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const supported = () => !!(CHAT_URL && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+
+  // Wait for the user to speak, record until they pause, return the clip (or null if nobody spoke)
+  async function record() {
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser(); an.fftSize = 1024; src.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const level = () => { an.getFloatTimeDomainData(buf); let t = 0; for (const v of buf) t += v * v; return Math.sqrt(t / buf.length); };
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    const stopped = new Promise((r) => { rec.onstop = r; });
+    rec.start();
+    const t0 = performance.now();
+    let floor = 0.01, n = 0, spoke = false, lastVoice = 0;
+    while (on) {
+      await sleep(60);
+      const now = performance.now(), lv = level();
+      if (now - t0 < 500) { floor = Math.max(floor, lv); continue; }    // measure room noise first
+      if (lv > floor * 2.5 + 0.015) { spoke = true; lastVoice = now; }
+      if (spoke && now - lastVoice > 1300) break;                         // paused: done
+      if (!spoke && now - t0 > 12000) break;                              // nobody spoke
+      if (now - t0 > 30000) break;
+    }
+    rec.stop(); await stopped; src.disconnect();
+    return spoke && on ? new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }) : null;
+  }
+
+  async function transcribe(blob) {
+    const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0] }, body: blob });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Speech service error ' + r.status);
+    return d.text || '';
+  }
+
+  async function loop() {
+    while (on) {
+      orb.set('listening');
+      let clip;
+      try { clip = await record(); } catch (e) { toast('Recording failed: ' + e.message); break; }
+      if (!on) break;
+      if (!clip) { toast('Jarvis stopped listening. Tap the orb to talk again.'); break; }
+      orb.set('thinking');
+      let text = '';
+      try { text = await transcribe(clip); } catch (e) { toast(e.message); break; }
+      if (!text.trim()) continue;
+      $('#askInput').value = '';
+      await ask(text.trim());
+      await sleep(400);                                                     // let the answer start speaking
+      while (on && 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) await sleep(200);
+      await sleep(300);
+    }
+    stop();
+  }
+
+  async function start() {
+    if (on) return;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) { toast('Microphone blocked: allow it in Safari (Website Settings, Microphone)'); return false; }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try { await ctx.resume(); } catch (e) {}
+    on = true; $('#speak').checked = true;
+    orb.el.classList.add('live');
+    loop();
+    return true;
+  }
+  function stop() {
+    on = false;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; }
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    orb.el.classList.remove('live');
+    orb.set('idle');
+  }
+  return { supported, toggle: () => (on ? stop() : start()), isOn: () => on };
+})();
 
 /* ---------- controls ---------- */
 $('#btnFit').onclick = () => fit(false);
