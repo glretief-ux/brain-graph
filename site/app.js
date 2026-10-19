@@ -889,7 +889,13 @@ const gg = (() => {
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
       const f = cf();
-      const addr = parseAddrs(d.draft.to)[0];
+      let addr = parseAddrs(d.draft.to)[0];
+      if (!addr) {                                                         // the AI missed it: match the names in the request ourselves
+        const ws = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
+        const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
+        const best = pool.map((c) => ({ c, s: ws.reduce((t, w) => t + (norm(c.name + ' ' + c.email).includes(w) ? 1 : 0), 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s)[0];
+        if (best) addr = { name: best.c.name, email: best.c.email };
+      }
       f.to.value = addr ? addr.email : '';
       f.subj.value = d.draft.subject || '';
       f.body.value = d.draft.body || '';
@@ -897,7 +903,7 @@ const gg = (() => {
       panel.classList.remove('closed');
       $('#compose').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       const who = addr ? (addr.name || addr.email) : '';
-      const msg = who ? 'Draft ready for ' + who + '. Check it, then tap Send.' : 'Draft ready, but I could not find the address. Type it in the To box, then tap Send.';
+      const msg = who ? 'Draft ready for ' + who + '. Check it, then tap Send.' : 'Draft ready, but I could not find the address (' + (book.length ? 'searched ' + book.length + ' contacts' : 'no contacts could be read' + (bookErr ? ': ' + bookErr : '')) + '). Type it in the To box, then tap Send.';
       box.replaceChildren(el('span', null, msg));
       orb.set('idle');
       say(msg);
