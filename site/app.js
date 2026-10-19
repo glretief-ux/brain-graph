@@ -988,7 +988,11 @@ function initChat() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
     mic.style.display = 'none';
-    orb.el.addEventListener('click', () => { panel.classList.remove('closed'); input.focus(); toast('Voice input is not supported in this browser. Type instead.'); });
+    orb.el.addEventListener('click', () => {
+      voiceBox.unlock();
+      if (convo.supported()) { convo.toggle(); return; }                  // hands-free mode needs no browser speech support
+      panel.classList.remove('closed'); input.focus(); toast('Voice input is not supported in this browser. Type instead.');
+    });
     return;
   }
   let voiceBroken = false;
