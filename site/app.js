@@ -710,14 +710,28 @@ const gg = (() => {
 
   async function loadCalendar() {
     const t0 = new Date(), t1 = new Date(Date.now() + 7 * 864e5);
-    const j = await api('https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=25&timeMin=' +
-      encodeURIComponent(t0.toISOString()) + '&timeMax=' + encodeURIComponent(t1.toISOString()));
-    data.events = (j.items || []).filter((e) => e.status !== 'cancelled').map((e) => {
-      const allDay = !!(e.start && e.start.date);
-      const s = new Date(allDay ? e.start.date + 'T00:00:00' : e.start.dateTime), en = new Date(allDay ? e.end.date + 'T00:00:00' : e.end.dateTime);
-      return { title: e.summary || '(no title)', allDay, s, en, loc: e.location || '' };
-    });
-    const lines = data.events.map((e) => '- ' + when(e.s, { weekday: 'short', day: 'numeric', month: 'short' }) + (e.allDay ? ' all day' : ', ' + when(e.s, { hour: '2-digit', minute: '2-digit' }) + '-' + when(e.en, { hour: '2-digit', minute: '2-digit' })) + ': ' + short(e.title, 70) + (e.loc ? ' @ ' + short(e.loc, 40) : ''));
+    const qs = '?singleEvents=true&orderBy=startTime&maxResults=25&timeMin=' + encodeURIComponent(t0.toISOString()) + '&timeMax=' + encodeURIComponent(t1.toISOString());
+    // every calendar you see in Google Calendar (family, classroom, holidays...), not only the main one
+    let cals = [{ id: 'primary', summary: '' }];
+    try {
+      const cl = await api('https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader&maxResults=20');
+      cals = (cl.items || []).filter((c) => c.selected !== false).slice(0, 10).map((c) => ({ id: c.id, summary: c.primary ? '' : (c.summaryOverride || c.summary || '') }));
+      if (!cals.length) cals = [{ id: 'primary', summary: '' }];
+    } catch (e) { /* fall back to the main calendar */ }
+    const results = await Promise.allSettled(cals.map((c) => api('https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent(c.id) + '/events' + qs).then((j) => ({ c, j }))));
+    const events = [];
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      for (const e of r.value.j.items || []) {
+        if (e.status === 'cancelled' || !e.start) continue;
+        const allDay = !!e.start.date;
+        const s = new Date(allDay ? e.start.date + 'T00:00:00' : e.start.dateTime), en = new Date(allDay ? e.end.date + 'T00:00:00' : e.end.dateTime);
+        events.push({ title: e.summary || '(no title)', allDay, s, en, loc: e.location || '', cal: r.value.c.summary });
+      }
+    }
+    if (!events.length && results.every((r) => r.status === 'rejected')) throw results[0].reason;
+    data.events = events.sort((x, y) => x.s - y.s).slice(0, 40);
+    const lines = data.events.map((e) => '- ' + when(e.s, { weekday: 'short', day: 'numeric', month: 'short' }) + (e.allDay ? ' all day' : ', ' + when(e.s, { hour: '2-digit', minute: '2-digit' }) + '-' + when(e.en, { hour: '2-digit', minute: '2-digit' })) + ': ' + short(e.title, 70) + (e.loc ? ' @ ' + short(e.loc, 40) : '') + (e.cal ? ' [' + short(e.cal, 24) + ']' : ''));
     const head = nowLine() + ' Calendar, next 7 days (' + data.events.length + ' events):\n';
     data.cal = (head + (lines.join('\n') || 'No events.')).slice(0, 1150);
   }
