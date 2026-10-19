@@ -7,7 +7,7 @@
 // Optional settings (Worker -> Settings -> Variables):
 //   ALLOWED_ORIGIN     comma-separated sites allowed to call this (default: your GitHub Pages site)
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
-//   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct)
+//   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct-fp8)
 //   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
@@ -84,7 +84,7 @@ export default {
 
     if (!useClaude) {
       try {
-        const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct", {
+        const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", {
           messages: [{ role: "system", content: system }, ...messages],
           max_tokens: 500,
         });
