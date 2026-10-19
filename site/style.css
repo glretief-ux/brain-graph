@@ -133,3 +133,13 @@ label.inline { justify-content: flex-start; margin: 8px 0 0; font-size: 12px; }
 
 label.voice { margin: 6px 0 0; font-size: 12px; }
 #voice { flex: 1; min-width: 0; max-width: 190px; height: 36px; border-radius: 10px; font: inherit; font-size: 14px; color: var(--text); background: rgba(255, 255, 255, .06); border: 1px solid var(--line); padding: 0 8px; }
+
+#google .hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+#gAgenda { font-size: 13px; color: #c3c9d6; margin-bottom: 8px; }
+#gAgenda .ev { display: flex; gap: 8px; padding: 3px 0; }
+#gAgenda .ev b { color: var(--accent); font-weight: 600; flex: none; min-width: 74px; font-variant-numeric: tabular-nums; }
+#gAgenda .mail { color: var(--muted); margin-top: 4px; }
+#google .grow { display: flex; flex-wrap: wrap; gap: 6px; }
+.gbtn { height: 40px; padding: 0 14px; border-radius: 10px; font: inherit; color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line); cursor: pointer; }
+.gbtn:not([hidden]):first-child { background: var(--accent); color: #04130a; border-color: var(--accent); font-weight: 600; }
+.gbtn[hidden] { display: none; }

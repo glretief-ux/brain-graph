@@ -690,6 +690,121 @@ function speakLocal(clean) {
   speechSynthesis.speak(u);
 }
 
+/* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
+const gg = (() => {
+  const CID = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.googleClientId) || '';
+  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly';
+  let token = '', exp = 0, tc = null, at = 0;
+  const data = { cal: '', mail: '', events: [], unread: null };
+  const live = () => !!token && Date.now() < exp - 30000;
+  const when = (d, opt) => d.toLocaleString('en-GB', opt);
+  const short = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+
+  async function api(url) {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+    if (r.status === 401) { token = ''; throw new Error('Google sign-in expired. Tap Connect Google again.'); }
+    if (!r.ok) throw new Error('Google error ' + r.status + (r.status === 403 ? ' (is the API enabled for your project?)' : ''));
+    return r.json();
+  }
+  const nowLine = () => 'Now: ' + when(new Date(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' (' + Intl.DateTimeFormat().resolvedOptions().timeZone + ').';
+
+  async function loadCalendar() {
+    const t0 = new Date(), t1 = new Date(Date.now() + 7 * 864e5);
+    const j = await api('https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=25&timeMin=' +
+      encodeURIComponent(t0.toISOString()) + '&timeMax=' + encodeURIComponent(t1.toISOString()));
+    data.events = (j.items || []).filter((e) => e.status !== 'cancelled').map((e) => {
+      const allDay = !!(e.start && e.start.date);
+      const s = new Date(allDay ? e.start.date + 'T00:00:00' : e.start.dateTime), en = new Date(allDay ? e.end.date + 'T00:00:00' : e.end.dateTime);
+      return { title: e.summary || '(no title)', allDay, s, en, loc: e.location || '' };
+    });
+    const lines = data.events.map((e) => '- ' + when(e.s, { weekday: 'short', day: 'numeric', month: 'short' }) + (e.allDay ? ' all day' : ', ' + when(e.s, { hour: '2-digit', minute: '2-digit' }) + '-' + when(e.en, { hour: '2-digit', minute: '2-digit' })) + ': ' + short(e.title, 70) + (e.loc ? ' @ ' + short(e.loc, 40) : ''));
+    const head = nowLine() + ' Calendar, next 7 days (' + data.events.length + ' events):\n';
+    data.cal = (head + (lines.join('\n') || 'No events.')).slice(0, 1150);
+  }
+  async function loadMail() {
+    const base = 'https://gmail.googleapis.com/gmail/v1/users/me/';
+    const [lab, list] = await Promise.all([api(base + 'labels/INBOX'), api(base + 'messages?labelIds=INBOX&maxResults=12')]);
+    data.unread = lab.messagesUnread;
+    const msgs = await Promise.all((list.messages || []).map((m) => api(base + 'messages/' + m.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date')));
+    const hv = (m, n) => ((m.payload.headers || []).find((h) => h.name.toLowerCase() === n) || {}).value || '';
+    const out = msgs.map((m) => {
+      const from = short(hv(m, 'from').replace(/<.*>/, '').replace(/"/g, ''), 28) || 'Unknown';
+      const unread = (m.labelIds || []).includes('UNREAD');
+      return '- ' + (unread ? '[unread] ' : '') + from + ' (' + when(new Date(+m.internalDate), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '): ' + short(hv(m, 'subject'), 70) + ' | ' + short(m.snippet, 70);
+    });
+    data.mail = ('Gmail inbox: ' + data.unread + ' unread. Latest messages:\n' + out.join('\n')).slice(0, 1150);
+  }
+
+  function render(msg) {
+    const st = $('#gStatus'), ag = $('#gAgenda');
+    const on = live();
+    $('#gConnect').hidden = on; $('#gRefresh').hidden = !on; $('#gOut').hidden = !on;
+    ag.replaceChildren();
+    if (!CID) { st.textContent = 'Needs a Google client ID in site/config.js (see the README).'; $('#gConnect').hidden = true; return; }
+    st.textContent = msg || (on ? 'Connected (read only). Ask Jarvis: "What is on my calendar today?" or "Any new emails?"' : 'Not connected. Your calendar and Gmail are read live in this browser and never saved.');
+    if (!on) return;
+    const upcoming = data.events.filter((e) => e.en > new Date()).slice(0, 4);
+    for (const e of upcoming) {
+      const row = el('div', 'ev');
+      row.append(el('b', null, e.allDay ? when(e.s, { day: 'numeric', month: 'short' }) : when(e.s, { weekday: 'short', hour: '2-digit', minute: '2-digit' })), el('span', null, e.title));
+      ag.append(row);
+    }
+    if (!upcoming.length && data.cal) ag.append(el('div', 'ev', 'No upcoming events this week.'));
+    if (data.unread != null) ag.append(el('div', 'mail', data.unread + ' unread in your inbox'));
+  }
+
+  async function refresh() {
+    if (!live()) { render(); return; }
+    $('#gStatus').textContent = 'Reading your calendar and inbox…';
+    const [c, m] = await Promise.allSettled([loadCalendar(), loadMail()]);
+    at = Date.now();
+    const err = [c, m].find((x) => x.status === 'rejected');
+    render(err ? err.reason.message : null);
+  }
+
+  function connect() {
+    if (!window.google || !google.accounts) { toast('Google sign-in is still loading. Try again in a moment.'); return; }
+    tc = tc || google.accounts.oauth2.initTokenClient({
+      client_id: CID, scope: SCOPES,
+      callback: (r) => {
+        if (r.error) { toast('Google: ' + (r.error_description || r.error)); return; }
+        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000;
+        refresh();
+      },
+      error_callback: (e) => toast('Google sign-in ' + ((e && e.type) || 'failed').replace(/_/g, ' '))
+    });
+    tc.requestAccessToken({ prompt: '' });
+  }
+  function signOut() {
+    try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
+    token = ''; exp = 0; data.cal = data.mail = ''; data.events = []; data.unread = null;
+    render();
+  }
+  function init() {
+    render();
+    if (!CID) return;
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+    document.head.append(s);
+    $('#gConnect').addEventListener('click', connect);
+    $('#gRefresh').addEventListener('click', refresh);
+    $('#gOut').addEventListener('click', signOut);
+  }
+  // Extra notes for Jarvis, only when the question is about calendar or mail
+  async function notesFor(q) {
+    if (!live()) return [];
+    const wantCal = /calendar|schedule|meeting|appointment|agenda|event|busy|free|today|tomorrow|tonight|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|brief|status|plan/i.test(q);
+    const wantMail = /mail|inbox|message|unread|sender|gmail|brief|status/i.test(q);
+    if (!wantCal && !wantMail) return [];
+    if (Date.now() - at > 5 * 60000) { try { await refresh(); } catch (e) {} }
+    const out = [];
+    if (wantCal && data.cal) out.push({ title: 'Your calendar', type: 'google', text: data.cal });
+    if (wantMail && data.mail) out.push({ title: 'Your Gmail inbox', type: 'google', text: data.mail });
+    return out;
+  }
+  return { init, notesFor, live };
+})();
+
 async function ask(question) {
   if (chat.busy || !question) return;
   const box = $('#answer');
@@ -709,7 +824,7 @@ async function ask(question) {
     const r = await fetch(CHAT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, notes: retrieve(question), history: chat.history })
+      body: JSON.stringify({ question, notes: [...(await gg.notesFor(question)), ...retrieve(question)].slice(0, 10), history: chat.history })
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
@@ -971,6 +1086,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 if (isMobile()) panel.classList.add('closed');
 resize();
 voiceBox.init();
+gg.init();
 initChat();
 fetch('graph.json', { cache: 'no-cache' })
   .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })

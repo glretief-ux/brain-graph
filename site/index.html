@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -46,6 +46,17 @@
     <label class="voice">Voice <select id="voice" aria-label="Jarvis voice"></select></label>
   </section>
 
+  <section id="google">
+    <h2>Calendar &amp; Gmail</h2>
+    <div id="gStatus" class="hint">Not connected.</div>
+    <div id="gAgenda"></div>
+    <div class="grow">
+      <button type="button" id="gConnect" class="gbtn">Connect Google</button>
+      <button type="button" id="gRefresh" class="gbtn" hidden>Refresh</button>
+      <button type="button" id="gOut" class="gbtn" hidden>Sign out</button>
+    </div>
+  </section>
+
   <section>
     <h2>Inspector</h2>
     <div id="inspector"></div>
@@ -69,7 +80,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="config.js?v=14"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

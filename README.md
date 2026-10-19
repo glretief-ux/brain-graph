@@ -64,3 +64,14 @@ Pick a voice under "Read answers aloud". **Jarvis AI voice (best)** uses Deepgra
 
 ## 3D view
 The graph is 3D by default: drag empty space to rotate, pinch or scroll to zoom, drag a note to move it, and it slowly spins when idle. The **3D** button flattens it back to the classic 2D layout. Shift+drag pans in 3D.
+
+## Calendar & Gmail (read only)
+The "Calendar & Gmail" panel signs you in with Google inside your browser. Nothing is stored in the repo or on the Worker. When you ask Jarvis about your calendar or mail, the relevant text is sent along with that one question to your Worker's AI to answer it, then forgotten.
+
+One-time setup (free):
+1. console.cloud.google.com -> New project (name it `brain-graph`).
+2. APIs & Services -> Library -> enable **Google Calendar API** and **Gmail API**.
+3. APIs & Services -> OAuth consent screen (Google Auth Platform) -> External -> fill the app name and your email -> add yourself as a **Test user**. Leave it in Testing.
+4. Credentials -> Create credentials -> **OAuth client ID** -> Web application -> Authorized JavaScript origin: `https://glretief-ux.github.io` -> Create.
+5. Copy the Client ID (it ends in `.apps.googleusercontent.com`) into `site/config.js` as `googleClientId`.
+Google shows an "unverified app" warning because it is your own test app: Advanced -> continue.
