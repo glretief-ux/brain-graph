@@ -570,20 +570,22 @@ function renderAnswer(text) {
 /* ---------- Jarvis voice ---------- */
 const voiceBox = (() => {
   const KEY = 'jarvisVoice';
-  const AI = '__ai';
+  const AI = '__ai', PRO = '__pro';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
   const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
   const player = new Audio();
   player.preload = 'auto';
-  let busyAI = false, unlocked = false, aiDown = false, token = 0;
+  let busyAI = false, unlocked = false, aiDown = false, proDown = false, token = 0;
   // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
   const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
   const unlock = () => {
     const c = getCtx(); if (c) { try { c.resume(); const b = c.createBuffer(1, 1, 22050), n = c.createBufferSource(); n.buffer = b; n.connect(c.destination); n.start(0); } catch (e) {} }
     if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {}
   };
-  const aiOn = () => !!CHAT_URL && !aiDown && sel() && sel().value === AI;
+  const aiOn = () => !!CHAT_URL && !aiDown && !!sel() && (sel().value === AI || sel().value === PRO);
+  const isPro = () => !!sel() && sel().value === PRO && !proDown;
+  const cap = () => (isPro() ? 300 : 600);
   const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
-  let engine = 'aura', actx = null, node = null;
+  let actx = null, node = null;
   const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
   const fetchSpeech = async (text, eng) => {
     const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speak: text, speaker: AI_SPEAKER, engine: eng }) });
@@ -613,17 +615,20 @@ const voiceBox = (() => {
     const attempt = async (eng) => { const blob = await fetchSpeech(text, eng); if (my !== token) return false; await playBlob(blob, my, onend); return true; };
     try {
       let ok;
-      try { ok = await attempt(engine); }
-      catch (e) {
-        if (engine === 'melo' || my !== token) throw e;
-        engine = 'melo';                                      // main voice out of free allowance or failing: use the cheap one
-        ok = await attempt('melo');
-      }
+      if (isPro()) {
+        try { ok = await attempt('aura'); }
+        catch (e) {
+          if (my !== token) throw e;
+          proDown = true;                                     // premium allowance used up (or failing): use the free voice
+          toast('Premium voice limit reached for today. Using the free Jarvis voice.');
+          ok = await attempt('melo');
+        }
+      } else ok = await attempt('melo');
       if (ok && my === token) onstart();
     } catch (e) {
       if (my !== token) return;
       busyAI = false; aiDown = true;
-      toast('AI voice failed (' + (e && e.message ? e.message : 'error') + '), using the iPad voice');
+      toast('Jarvis voice failed (' + (e && e.message ? e.message : 'error') + '), using the device voice');
       onfail();
     }
   };
@@ -645,9 +650,13 @@ const voiceBox = (() => {
     if (!voices.length && !CHAT_URL) return;
     let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
     const opts = voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; });
-    if (CHAT_URL) { const a = document.createElement('option'); a.value = AI; a.textContent = 'Jarvis AI voice (best)'; opts.unshift(a); }
+    if (CHAT_URL) {
+      const f = document.createElement('option'); f.value = AI; f.textContent = 'Jarvis voice (free, unlimited)';
+      const pr = document.createElement('option'); pr.value = PRO; pr.textContent = 'Jarvis premium voice (limited)';
+      opts.unshift(f, pr);
+    }
     sel().replaceChildren(...opts);
-    const ok = saved === AI ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
+    const ok = (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
     sel().value = ok ? saved : (CHAT_URL ? AI : voices[0].voiceURI);
   };
   const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
@@ -665,7 +674,7 @@ const voiceBox = (() => {
       speechSynthesis.speak(u);
     });
   };
-  return { init, current, aiOn, speakAI, stop, unlock, busy: () => busyAI };
+  return { init, current, aiOn, cap, speakAI, stop, unlock, busy: () => busyAI };
 })();
 
 function say(text) {
@@ -674,7 +683,7 @@ function say(text) {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
   if (voiceBox.aiOn()) {
-    voiceBox.speakAI(clean.slice(0, 500), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
     return;
   }
   speakLocal(clean);

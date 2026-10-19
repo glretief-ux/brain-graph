@@ -60,7 +60,7 @@ The glowing ring top-right shows what Jarvis is doing (standby, listening, think
 Deep link to a note: `.../index.html#skills/Keyword%20Research`
 
 ## Jarvis voice
-Pick a voice under "Read answers aloud". **Jarvis AI voice (best)** uses Deepgram Aura-2 through the Worker (speaker set by `aiVoice` in `site/config.js`, default `draco`; try `orion`, `apollo`, `atlas`, `zeus`). The free Cloudflare plan only covers a few thousand characters of speech a day; when that runs out the page falls back to the device voice.
+Pick a voice under "Read answers aloud". **Jarvis voice (free, unlimited)** uses MeloTTS through the Worker and costs almost nothing against the free Cloudflare allowance. **Jarvis premium voice (limited)** uses Deepgram Aura-2 (speaker set by `aiVoice` in `site/config.js`, default `draco`) and uses up the daily free allowance quickly (about 10 short answers); when it runs out the page switches to the free voice automatically.
 
 ## 3D view
 The graph is 3D by default: drag empty space to rotate, pinch or scroll to zoom, drag a note to move it, and it slowly spins when idle. The **3D** button flattens it back to the classic 2D layout. Shift+drag pans in 3D.
