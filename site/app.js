@@ -389,6 +389,60 @@ $('#search').addEventListener('input', (e) => {
     });
 });
 
+
+/* ---------- J.A.R.V.I.S. orb ---------- */
+const orb = (() => {
+  const btn = $('#orb'), cv = $('#orbc'), label = $('#orbState'), g2 = cv.getContext('2d');
+  const COL = { idle: [74, 222, 128], listening: [56, 189, 248], thinking: [251, 191, 36], speaking: [74, 222, 128] };
+  const NAME = { idle: 'STANDBY', listening: 'LISTENING', thinking: 'THINKING', speaking: 'SPEAKING' };
+  let state = 'idle', t0 = performance.now(), level = 0, hold = 0;
+  function set(s) {
+    if (s === state) return;
+    state = s;
+    btn.dataset.state = s;
+    label.textContent = NAME[s];
+  }
+  function draw(now) {
+    const t = (now - t0) / 1000, W = cv.width, c = W / 2;
+    const [r, g, b] = COL[state], rgb = (a) => `rgba(${r},${g},${b},${a})`;
+    const target = state === 'speaking' ? 0.55 + 0.45 * Math.abs(Math.sin(t * 7.3) * Math.sin(t * 2.9 + 1)) :
+      state === 'listening' ? 0.5 + 0.2 * Math.sin(t * 3) : state === 'thinking' ? 0.45 : 0.25 + 0.05 * Math.sin(t * 1.4);
+    level += (target - level) * 0.18;
+    const spin = state === 'thinking' ? 3.2 : state === 'idle' ? 0.35 : 1.1;
+    g2.clearRect(0, 0, W, W);
+    // glow core
+    const grad = g2.createRadialGradient(c, c, 4, c, c, c * 0.62);
+    grad.addColorStop(0, rgb(0.55 * level + 0.2));
+    grad.addColorStop(1, rgb(0));
+    g2.fillStyle = grad;
+    g2.beginPath(); g2.arc(c, c, c * 0.62, 0, 6.2832); g2.fill();
+    // outer tick ring
+    g2.lineWidth = 3; g2.strokeStyle = rgb(0.55);
+    for (let i = 0; i < 60; i++) {
+      const a = (i / 60) * 6.2832 + t * spin * 0.15, long = i % 5 === 0;
+      const r0 = c * 0.93, r1 = r0 - (long ? 12 : 6);
+      g2.beginPath(); g2.moveTo(c + Math.cos(a) * r0, c + Math.sin(a) * r0); g2.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1); g2.stroke();
+    }
+    // rotating arcs
+    g2.lineCap = 'round';
+    g2.lineWidth = 5; g2.strokeStyle = rgb(0.95);
+    g2.beginPath(); g2.arc(c, c, c * 0.72, t * spin, t * spin + 1.6 + level); g2.stroke();
+    g2.strokeStyle = rgb(0.6);
+    g2.beginPath(); g2.arc(c, c, c * 0.72, t * spin + 3.3, t * spin + 4.4); g2.stroke();
+    g2.lineWidth = 3; g2.strokeStyle = rgb(0.75);
+    g2.beginPath(); g2.arc(c, c, c * 0.56, -t * spin * 1.4, -t * spin * 1.4 + 2.2); g2.stroke();
+    // inner ring that breathes with the voice
+    g2.lineWidth = 2; g2.strokeStyle = rgb(0.5 + 0.4 * level);
+    g2.beginPath(); g2.arc(c, c, c * (0.36 + 0.07 * level), 0, 6.2832); g2.stroke();
+    g2.fillStyle = rgb(0.9);
+    g2.font = '700 15px ui-monospace, Menlo, monospace'; g2.textAlign = 'center'; g2.textBaseline = 'middle';
+    g2.fillText('J.A.R.V.I.S.', c, c);
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+  return { set, get: () => state, el: btn };
+})();
+
 /* ---------- ask the brain (chat) ---------- */
 const CHAT_URL = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.chatUrl) || '';
 let NOTES = [];
@@ -469,6 +523,8 @@ function say(text) {
   if (!$('#speak').checked || !('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text.replace(/\[\[|\]\]/g, ''));
+  u.onstart = () => orb.set('speaking');
+  u.onend = u.onerror = () => orb.set('idle');
   speechSynthesis.speak(u);
 }
 
@@ -478,10 +534,12 @@ async function ask(question) {
   if (!CHAT_URL) {                                              // free search mode
     const a = localAnswer(question);
     renderAnswer(a);
+    orb.set('idle');
     say(a);
     return;
   }
   chat.busy = true;
+  orb.set('thinking');
   $('#askGo').disabled = true;
   box.replaceChildren(el('span', 'muted', 'Thinking…'));
   S.cited = new Set();
@@ -496,9 +554,11 @@ async function ask(question) {
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
     chat.history = chat.history.slice(-6);
     renderAnswer(data.answer);
+    orb.set('idle');
     say(data.answer);
   } catch (e) {
     box.replaceChildren(el('span', 'err', 'Could not get an answer: ' + e.message));
+    orb.set('idle');
   } finally {
     chat.busy = false;
     $('#askGo').disabled = false;
@@ -519,12 +579,19 @@ function initChat() {
     ask(q);
   });
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { mic.style.display = 'none'; return; }
-  mic.addEventListener('click', () => {
+  if (!SR) {
+    mic.style.display = 'none';
+    orb.el.addEventListener('click', () => { panel.classList.remove('closed'); input.focus(); toast('Voice input is not supported in this browser. Type instead.'); });
+    return;
+  }
+  const startListening = () => {
+    if (orb.get() === 'listening') return;
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
     const rec = new SR();
     rec.lang = navigator.language || 'en-US';
     rec.interimResults = false;
     mic.classList.add('on');
+    rec.onstart = () => orb.set('listening');
     rec.onresult = (ev) => { const t = ev.results[0][0].transcript; input.value = ''; ask(t); };
     rec.onerror = (ev) => {
       const hints = {
@@ -536,9 +603,12 @@ function initChat() {
       };
       toast(hints[ev.error] || ('Voice input failed: ' + (ev.error || 'unknown') + '. Tip: use the keyboard mic key instead'));
     };
-    rec.onend = () => mic.classList.remove('on');
-    try { rec.start(); } catch (e) { mic.classList.remove('on'); }
-  });
+    rec.onend = () => { mic.classList.remove('on'); if (orb.get() === 'listening') orb.set('idle'); };
+    try { rec.start(); } catch (e) { mic.classList.remove('on'); orb.set('idle'); }
+  };
+  mic.addEventListener('click', startListening);
+  // Tapping the orb = talk to Jarvis, and Jarvis talks back
+  orb.el.addEventListener('click', () => { $('#speak').checked = true; startListening(); });
 }
 
 /* ---------- controls ---------- */

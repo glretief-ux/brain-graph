@@ -44,6 +44,9 @@ summary each. No account, no key, no cost.
 The Worker only answers requests from `https://glretief-ux.github.io` (add `ALLOWED_ORIGIN` to allow others).
 Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers aloud" use the browser's own speech features.
 
+## J.A.R.V.I.S. orb
+The glowing ring top-right shows what Jarvis is doing (standby, listening, thinking, speaking). **Tap it to talk**; answers are read aloud.
+
 ## Controls
 | Action | Touch | Mouse |
 |---|---|---|

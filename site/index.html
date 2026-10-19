@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -18,6 +18,11 @@
   <button id="btnFit" title="Fit all">Fit</button>
   <button id="btnPath" title="Path mode: tap two notes to trace the route" aria-pressed="false">Path</button>
 </div>
+
+<button id="orb" type="button" aria-label="J.A.R.V.I.S. voice: tap to talk" title="Tap to talk">
+  <canvas id="orbc" width="220" height="220"></canvas>
+  <span id="orbState">STANDBY</span>
+</button>
 
 <aside id="panel">
   <header>
@@ -62,7 +67,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="config.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
