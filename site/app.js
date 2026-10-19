@@ -522,6 +522,37 @@ function renderAnswer(text) {
 /* ---------- Jarvis voice ---------- */
 const voiceBox = (() => {
   const KEY = 'jarvisVoice';
+  const AI = '__ai';
+  const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
+  const player = new Audio();
+  player.preload = 'auto';
+  let busyAI = false, unlocked = false, aiDown = false, token = 0;
+  // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
+  const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+  const unlock = () => { if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {} };
+  const aiOn = () => !!CHAT_URL && !aiDown && sel() && sel().value === AI;
+  const stop = () => { token++; try { player.pause(); } catch (e) {} busyAI = false; };
+  const speakAI = async (text, onstart, onend, onfail) => {
+    const my = ++token; busyAI = true;
+    try {
+      const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speak: text, speaker: AI_SPEAKER }) });
+      if (!r.ok) throw new Error('speech ' + r.status);
+      const blob = await r.blob();
+      if (my !== token) return;
+      if (!blob.size) throw new Error('empty audio');
+      const url = URL.createObjectURL(blob);
+      player.onended = player.onerror = () => { URL.revokeObjectURL(url); if (my === token) { busyAI = false; onend(); } };
+      player.src = url;
+      await player.play();
+      if (my === token) onstart();
+    } catch (e) {
+      if (my !== token) return;
+      busyAI = false;
+      aiDown = true;                                      // daily free limit or an error: use the iPad voice from now on
+      toast('AI voice unavailable, using the iPad voice');
+      onfail();
+    }
+  };
   const sel = () => document.getElementById('voice');
   let voices = [];
   const rate = (v) => {                                   // higher = more Jarvis-like
@@ -537,10 +568,13 @@ const voiceBox = (() => {
   const load = () => {
     if (!('speechSynthesis' in window) || !sel()) return;
     voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang)).sort((a, b) => rate(b) - rate(a) || a.name.localeCompare(b.name));
-    if (!voices.length) return;
+    if (!voices.length && !CHAT_URL) return;
     let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
-    sel().replaceChildren(...voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; }));
-    sel().value = voices.some((v) => v.voiceURI === saved) ? saved : voices[0].voiceURI;
+    const opts = voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; });
+    if (CHAT_URL) { const a = document.createElement('option'); a.value = AI; a.textContent = 'Jarvis AI voice (best)'; opts.unshift(a); }
+    sel().replaceChildren(...opts);
+    const ok = saved === AI ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
+    sel().value = ok ? saved : (CHAT_URL ? AI : voices[0].voiceURI);
   };
   const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
   const init = () => {
@@ -549,20 +583,32 @@ const voiceBox = (() => {
     speechSynthesis.addEventListener('voiceschanged', load);
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
-      speechSynthesis.cancel();
+      speechSynthesis.cancel(); stop(); unlock();
+      if (aiOn()) { speakAI('At your service.', () => {}, () => {}, () => {}); return; }
       const u = new SpeechSynthesisUtterance('At your service.');
       const v = current(); if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = 0.95;
       speechSynthesis.speak(u);
     });
   };
-  return { init, current };
+  return { init, current, aiOn, speakAI, stop, unlock, busy: () => busyAI };
 })();
 
 function say(text) {
-  if (!$('#speak').checked || !('speechSynthesis' in window)) return;
+  if (!$('#speak').checked) return;
+  const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  voiceBox.stop();
+  if (voiceBox.aiOn()) {
+    voiceBox.speakAI(clean.slice(0, 500), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    return;
+  }
+  speakLocal(clean);
+}
+function speakLocal(clean) {
+  if (!('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/\[\[|\]\]/g, ''));
+  const u = new SpeechSynthesisUtterance(clean);
   const v = voiceBox.current(); if (v) { u.voice = v; u.lang = v.lang; }
   u.rate = 0.95;
   u.onstart = () => orb.set('speaking');
@@ -614,6 +660,7 @@ function initChat() {
   }
   fetch('notes.json', { cache: 'no-cache' }).then((r) => r.json()).then((d) => { NOTES = d; }).catch(() => {});
   form.addEventListener('submit', (e) => {
+    voiceBox.unlock();
     e.preventDefault();
     const q = input.value.trim();
     input.value = '';
@@ -656,6 +703,7 @@ function initChat() {
   mic.addEventListener('click', startListening);
   // Tapping the orb = talk to Jarvis, and Jarvis talks back
   orb.el.addEventListener('click', () => {
+    voiceBox.unlock();
     if (convo.supported()) { convo.toggle(); return; }
     $('#speak').checked = true; startListening();
   });
@@ -714,7 +762,7 @@ const convo = (() => {
       $('#askInput').value = '';
       await ask(text.trim());
       await sleep(400);                                                     // let the answer start speaking
-      while (on && 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) await sleep(200);
+      while (on && (voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)))) await sleep(200);
       await sleep(300);
     }
     stop();
@@ -738,6 +786,7 @@ const convo = (() => {
     stream = null;
     if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; }
     if ('speechSynthesis' in window) speechSynthesis.cancel();
+    voiceBox.stop();
     orb.el.classList.remove('live');
     orb.set('idle');
   }

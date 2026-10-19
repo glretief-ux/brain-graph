@@ -8,6 +8,7 @@
 //   ALLOWED_ORIGIN     comma-separated sites allowed to call this (default: your GitHub Pages site)
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
 //   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct-fp8)
+//   TTS_MODEL          free text-to-speech model (default: @cf/deepgram/aura-2-en)
 //   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
@@ -57,6 +58,26 @@ export default {
 
     let body;
     try { body = await req.json(); } catch { return json({ error: "Bad JSON" }, 400, cors); }
+
+    // Voice out: the page sends {speak, speaker}; we answer with an MP3 (Deepgram Aura-2 on Workers AI)
+    if (body.speak) {
+      if (!env.AI) return json({ error: "Voice needs the Workers AI binding named AI" }, 500, cors);
+      const text = String(body.speak).slice(0, 600);
+      const speaker = String(body.speaker || "draco").toLowerCase().replace(/[^a-z]/g, "").slice(0, 20) || "draco";
+      try {
+        const out = await env.AI.run(env.TTS_MODEL || "@cf/deepgram/aura-2-en", { text, speaker, encoding: "mp3" });
+        let payload = out;
+        if (out instanceof Response) payload = out.body;
+        else if (out && typeof out === "object" && typeof out.audio === "string") {
+          const bin = atob(out.audio); const u8 = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          payload = u8;
+        }
+        return new Response(payload, { status: 200, headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store", ...cors } });
+      } catch (e) {
+        return json({ error: "Speech error: " + (e && e.message ? e.message : "unknown") }, 502, cors);
+      }
+    }
 
     const question = String(body.question || "").trim().slice(0, 1000);
     if (!question) return json({ error: "Empty question" }, 400, cors);

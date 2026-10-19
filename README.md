@@ -58,3 +58,6 @@ The glowing ring top-right shows what Jarvis is doing (standby, listening, think
 | Move a node | drag it | drag it |
 
 Deep link to a note: `.../index.html#skills/Keyword%20Research`
+
+## Jarvis voice
+Pick a voice under "Read answers aloud". **Jarvis AI voice (best)** uses Deepgram Aura-2 through the Worker (speaker set by `aiVoice` in `site/config.js`, default `draco`; try `orion`, `apollo`, `atlas`, `zeus`). The free Cloudflare plan only covers a few thousand characters of speech a day; when that runs out the page falls back to the device voice.
