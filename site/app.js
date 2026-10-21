@@ -1484,7 +1484,7 @@ const svc = (() => {
   const CUR_ALIAS = [
     ['south african rand', 'ZAR'], ['rand', 'ZAR'], ['zar', 'ZAR'], ['euros', 'EUR'], ['euro', 'EUR'], ['eur', 'EUR'],
     ['us dollars', 'USD'], ['us dollar', 'USD'], ['american dollars', 'USD'], ['dollars', 'USD'], ['dollar', 'USD'], ['bucks', 'USD'], ['usd', 'USD'],
-    ['british pounds', 'GBP'], ['british pound', 'GBP'], ['pounds sterling', 'GBP'], ['sterling', 'GBP'], ['quid', 'GBP'], ['gbp', 'GBP'],
+    ['british pounds', 'GBP'], ['pound sterling', 'GBP'], ['uk pounds', 'GBP'], ['uk pound', 'GBP'], ['english pounds', 'GBP'], ['british pound', 'GBP'], ['pounds sterling', 'GBP'], ['sterling', 'GBP'], ['quid', 'GBP'], ['gbp', 'GBP'],
     ['canadian dollars', 'CAD'], ['canadian dollar', 'CAD'], ['cad', 'CAD'], ['australian dollars', 'AUD'], ['australian dollar', 'AUD'], ['aud', 'AUD'],
     ['new zealand dollars', 'NZD'], ['nzd', 'NZD'], ['hong kong dollars', 'HKD'], ['hkd', 'HKD'], ['singapore dollars', 'SGD'], ['sgd', 'SGD'],
     ['swiss francs', 'CHF'], ['swiss franc', 'CHF'], ['francs', 'CHF'], ['franc', 'CHF'], ['chf', 'CHF'],
@@ -1553,7 +1553,8 @@ const svc = (() => {
         const r = t.replace(/\b(?:the|an?|current|exchange rate|rate|price|value|of|for|between|from)\b/g, ' ').replace(/[?.!]+/g, ' ').replace(/\s+/g, ' ').trim().match(/^([a-z][a-z ]*?)\s+(?:to|in|into|against|versus|vs|and)\s+([a-z][a-z ]*?)$/);
         if (!r || !/\b(?:rate|exchange)\b/.test(q.toLowerCase()) && !/^\s*(?:the\s+)?[a-z ]+\s+(?:to|in|into)\s+[a-z ]+\s*[?.!]*$/i.test(q)) return null;
         amount = 1; a = normUnit(r[1]); b = normUnit(r[2]);
-        if (!curOf(a) || !curOf(b)) return null;
+        const isP = (x) => /^pounds?$/.test(x);
+        if (!(curOf(a) || (isP(a) && curOf(b))) || !(curOf(b) || (isP(b) && curOf(a)))) return null;
       }
     }
     if (!isFinite(amount) || !a || !b || a === b) return null;
