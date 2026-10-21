@@ -1010,7 +1010,14 @@ const gg = (() => {
   // exact name part 3, one-letter-off name part 2, address-only match 1
   function contactScore(c, ws) {
     const nm = norm(c.name), parts = nm.split(/[^a-z0-9]+/).filter(Boolean), em = norm(c.email);
-    return ws.reduce((t, w) => t + (parts.includes(w) ? 3 : (w.length >= 4 && parts.some((x) => x.length >= 4 && lev1(x, w))) ? 2 : (nm.includes(w) || em.split('@')[0].split(/[^a-z0-9]+/).includes(w)) ? 1 : 0), 0);
+    const local = em.split('@')[0], ltoks = local.split(/[^a-z0-9]+/).filter(Boolean);
+    // does the start of an address word sound like the name? (eliseretief ~ eliza: first 5 letters are one letter off)
+    const pre = (t, w) => w.length >= 4 && t.length >= w.length && (t.startsWith(w) || lev1(t.slice(0, w.length), w) || lev1(t.slice(0, w.length + 1), w));
+    return ws.reduce((t, w) => t + (
+      parts.includes(w) ? 3 :
+      (w.length >= 4 && parts.some((x) => x.length >= 4 && (lev1(x, w) || pre(x, w)))) ? 2 :
+      (w.length >= 4 && ltoks.some((x) => pre(x, w))) ? 2 :
+      (nm.includes(w) || ltoks.includes(w)) ? 1 : 0), 0);
   }
   async function getContacts(q) {
     const map = new Map();
