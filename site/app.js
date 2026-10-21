@@ -1007,14 +1007,29 @@ const gg = (() => {
     if (m) for (const frag of m) { const w = frag.trim().split(/\s+/).pop(); if (w && !isStop(w)) return [w]; }
     return norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !isStop(w));
   }
-  // exact name part 3, one-letter-off name part 2, address-only match 1
+  // how a name sounds (Soundex): voice input often spells names differently ("Barry" for "Beri", "Eliza" for "Elise")
+  function sdx(w) {
+    w = norm(w).replace(/[^a-z]/g, '');
+    if (w.length < 3) return '';
+    const code = { b: 1, f: 1, p: 1, v: 1, c: 2, g: 2, j: 2, k: 2, q: 2, s: 2, x: 2, z: 2, d: 3, t: 3, l: 4, m: 5, n: 5, r: 6 };
+    let out = w[0], prev = code[w[0]] || 0;
+    for (let i = 1; i < w.length && out.length < 4; i++) {
+      const ch = w[i], cd = code[ch] || 0;
+      if (cd && cd !== prev) out += cd;
+      if (ch !== 'h' && ch !== 'w') prev = cd;
+    }
+    return (out + '000').slice(0, 4);
+  }
+  const sounds = (a, b) => a.length >= 3 && b.length >= 3 && a[0] === b[0] && sdx(a) === sdx(b);
+  // exact name part 3, one-letter-off or same-sounding name part 2, address-only match 1
   function contactScore(c, ws) {
     const nm = norm(c.name), parts = nm.split(/[^a-z0-9]+/).filter(Boolean), em = norm(c.email);
     const local = em.split('@')[0], ltoks = local.split(/[^a-z0-9]+/).filter(Boolean);
     // does the start of an address word sound like the name? (eliseretief ~ eliza: first 5 letters are one letter off)
-    const pre = (t, w) => w.length >= 4 && t.length >= w.length && (t.startsWith(w) || lev1(t.slice(0, w.length), w) || lev1(t.slice(0, w.length + 1), w));
+    const pre = (t, w) => w.length >= 4 && t.length >= w.length && (t.startsWith(w) || lev1(t.slice(0, w.length), w) || lev1(t.slice(0, w.length + 1), w) || sounds(t.slice(0, w.length - 1), w) || sounds(t.slice(0, w.length), w));
     return ws.reduce((t, w) => t + (
       parts.includes(w) ? 3 :
+      (w.length >= 3 && parts.some((x) => sounds(x, w))) ? 2 :
       (w.length >= 4 && parts.some((x) => x.length >= 4 && (lev1(x, w) || pre(x, w)))) ? 2 :
       (w.length >= 4 && ltoks.some((x) => pre(x, w))) ? 2 :
       (nm.includes(w) || ltoks.includes(w)) ? 1 : 0), 0);
