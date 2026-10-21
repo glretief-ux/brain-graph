@@ -566,6 +566,7 @@ const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () 
 async function brainFetch(body) {
   if (GKEY()) {
     try {
+      brainFetch.lastErr = '';
       if (body.question && body.live) {                                  // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
         const sysLive = 'You are J.A.R.V.I.S., a voice assistant. Today is ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.';
@@ -600,7 +601,8 @@ async function brainFetch(body) {
         }
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1000) });
-        const answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
+        let answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
+        if (body.live && brainFetch.lastErr) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
         return fakeRes({ answer });
       }
       if (body.compose) {
