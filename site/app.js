@@ -1496,10 +1496,19 @@ const svc = (() => {
     ['korean won', 'KRW'], ['won', 'KRW'], ['krw', 'KRW'], ['baht', 'THB'], ['thb', 'THB'], ['rupiah', 'IDR'], ['idr', 'IDR'], ['shekels', 'ILS'], ['shekel', 'ILS'], ['ils', 'ILS'],
     ['ringgit', 'MYR'], ['myr', 'MYR'], ['philippine pesos', 'PHP'], ['php', 'PHP'], ['lei', 'RON'], ['ron', 'RON'], ['icelandic krona', 'ISK'], ['isk', 'ISK']
   ];
+  // Every other currency (open.er-api.com covers ~160). 'CODE:name|name' - any 3-letter ISO code also works on its own.
+  const MORE_CUR = 'AED:uae dirham|emirati dirham|dirham|dirhams|united arab emirates dirham;AFN:afghani|afghan afghani;ALL:albanian lek|lek;AMD:armenian dram|dram;ANG:guilder|antillean guilder;AOA:kwanza|angolan kwanza;ARS:argentine peso|argentinian peso;AWG:aruban florin|florin;AZN:azerbaijani manat|manat;BAM:convertible mark|bosnian mark;BBD:barbadian dollar|barbados dollar;BDT:taka|bangladeshi taka;BGN:lev|leva|bulgarian lev;BHD:bahraini dinar;BIF:burundian franc;BMD:bermudian dollar;BND:brunei dollar;BOB:boliviano|bolivian boliviano;BSD:bahamian dollar;BTN:ngultrum|bhutanese ngultrum;BWP:pula|botswana pula;BYN:belarusian ruble|belarusian rouble;BZD:belize dollar;CDF:congolese franc;CLP:chilean peso;COP:colombian peso;CRC:colon|costa rican colon;CUP:cuban peso;CVE:cape verdean escudo|escudo;DJF:djiboutian franc;DOP:dominican peso;DZD:algerian dinar;EGP:egyptian pound|egyptian pounds;ERN:nakfa|eritrean nakfa;ETB:birr|ethiopian birr;FJD:fijian dollar|fiji dollar;FKP:falkland pound;GEL:lari|georgian lari;GHS:cedi|ghanaian cedi;GIP:gibraltar pound;GMD:dalasi|gambian dalasi;GNF:guinean franc;GTQ:quetzal|guatemalan quetzal;GYD:guyanese dollar;HNL:lempira|honduran lempira;HRK:kuna|croatian kuna;HTG:gourde|haitian gourde;IQD:iraqi dinar;IRR:iranian rial|rial;JMD:jamaican dollar;JOD:jordanian dinar;KES:kenyan shilling|shilling|shillings;KGS:som|kyrgyzstani som;KHR:riel|cambodian riel;KMF:comorian franc;KWD:kuwaiti dinar|dinar|dinars;KYD:cayman dollar;KZT:tenge|kazakhstani tenge;LAK:kip|lao kip;LBP:lebanese pound|lebanese pounds;LKR:sri lankan rupee;LRD:liberian dollar;LSL:loti|lesotho loti;LYD:libyan dinar;MAD:moroccan dirham;MDL:moldovan leu;MGA:ariary|malagasy ariary;MKD:denar|macedonian denar;MMK:kyat|myanmar kyat;MNT:tugrik|mongolian tugrik;MOP:pataca|macanese pataca;MRU:ouguiya|mauritanian ouguiya;MUR:mauritian rupee;MVR:rufiyaa|maldivian rufiyaa;MWK:kwacha|malawian kwacha;NAD:namibian dollar;NGN:naira|nigerian naira;NIO:cordoba|nicaraguan cordoba;NPR:nepalese rupee|nepali rupee;OMR:omani rial;PAB:balboa|panamanian balboa;PEN:sol|soles|peruvian sol|peruvian nuevo sol;PGK:kina|papua new guinean kina;PKR:pakistani rupee;PYG:guarani|paraguayan guarani;QAR:qatari riyal|qatari rial;RSD:serbian dinar;RUB:ruble|rubles|rouble|roubles|russian ruble|russian rouble;RWF:rwandan franc;SAR:saudi riyal|saudi rial|riyal|riyals;SBD:solomon islands dollar;SCR:seychellois rupee;SDG:sudanese pound;SHP:saint helena pound;SLE:sierra leonean leone|leone;SOS:somali shilling;SRD:surinamese dollar;SSP:south sudanese pound;STN:dobra|sao tome dobra;SYP:syrian pound;SZL:lilangeni|swazi lilangeni|eswatini lilangeni;TJS:somoni|tajikistani somoni;TMT:turkmenistani manat;TND:tunisian dinar;TOP:paanga|tongan paanga;TTD:trinidad and tobago dollar;TWD:new taiwan dollar|taiwan dollar|taiwanese dollar|taiwan dollars;TZS:tanzanian shilling;UAH:hryvnia|ukrainian hryvnia|hryvnias;UGX:ugandan shilling;UYU:uruguayan peso;UZS:uzbek som|uzbekistani som|sum;VES:venezuelan bolivar|bolivar;VND:dong|vietnamese dong;VUV:vatu|vanuatu vatu;WST:tala|samoan tala;XAF:cfa franc|central african cfa franc;XCD:east caribbean dollar;XOF:west african cfa franc;XPF:cfp franc;YER:yemeni rial;ZMW:zambian kwacha;ZWL:zimbabwean dollar;AFA:old afghani';
+  const MORE_CODES = new Set();
+  MORE_CUR.split(';').forEach((e) => { const i = e.indexOf(':'), code = e.slice(0, i); MORE_CODES.add(code); e.slice(i + 1).split('|').forEach((n) => CUR_ALIAS.push([n, code])); });
+  // keep the long names first so 'south african rand' wins over 'rand'
+  CUR_ALIAS.sort((x, y) => y[0].length - x[0].length);
+  const ECB_CODES = new Set('AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR'.split(' '));
   const curOf = (w) => {
     w = String(w || '').trim();
     const hit = CUR_ALIAS.find((x) => x[0] === w) || CUR_ALIAS.find((x) => x[0] === w.replace(/(?:es|s)$/, '')) || CUR_ALIAS.find((x) => x[0] === w.replace(/s$/, ''));
-    return hit ? hit[1] : '';
+    if (hit) return hit[1];
+    const up = w.toUpperCase();
+    return /^[A-Z]{3}$/.test(up) && (ECB_CODES.has(up) || MORE_CODES.has(up)) ? up : '';
   };
   // "one hundred and fifty" -> 150, "a thousand" -> 1000 (voice input often spells numbers out)
   const NWV = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
@@ -1573,11 +1582,22 @@ const svc = (() => {
       const nm = (x) => (c.ua.type === 'temp' ? 'degrees ' : '') + x.replace('°', ''); return num(c.amount) + ' ' + nm(c.a) + ' is ' + num(v) + ' ' + nm(c.b) + '.';
     }
     if (c.from === c.to) return num(c.amount) + ' ' + c.from + ' is ' + num(c.amount) + ' ' + c.to + '.';
-    const d = await getJSON('https://api.frankfurter.dev/v1/latest?amount=' + c.amount + '&base=' + c.from + '&symbols=' + c.to);
-    const v = d.rates && d.rates[c.to];
-    if (v == null) throw new Error('no rate for ' + c.to);
-    const rate = v / c.amount;
-    return num(c.amount) + ' ' + c.from + ' is ' + num(v) + ' ' + c.to + ' (1 ' + c.from + ' = ' + (rate >= 1 ? rate.toFixed(3) : rate.toFixed(4)) + ' ' + c.to + ', ECB rate of ' + d.date + ').';
+    const lbl = (v) => num(c.amount) + ' ' + c.from + ' is ' + num(v) + ' ' + c.to;
+    const tail = (v, src) => ' (1 ' + c.from + ' = ' + ((v / c.amount) >= 1 ? (v / c.amount).toFixed(3) : (v / c.amount).toFixed(4)) + ' ' + c.to + ', ' + src + ').';
+    const viaEcb = async () => {
+      const d = await getJSON('https://api.frankfurter.dev/v1/latest?amount=' + c.amount + '&base=' + c.from + '&symbols=' + c.to);
+      const v = d.rates && d.rates[c.to]; if (v == null) throw new Error('no rate');
+      return lbl(v) + tail(v, 'ECB rate of ' + d.date);
+    };
+    const viaWide = async () => {
+      const d = await getJSON('https://open.er-api.com/v6/latest/' + c.from);
+      const r = d.rates && d.rates[c.to]; if (r == null) throw new Error('no rate for ' + c.to);
+      const v = c.amount * r;
+      return lbl(v) + tail(v, 'rate of ' + String(d.time_last_update_utc || '').replace(/\s*\+0000$/, '').replace(/^\w+,\s*/, '').replace(/\s+\d\d:\d\d:\d\d.*/, ''));
+    };
+    const both = ECB_CODES.has(c.from) && ECB_CODES.has(c.to);
+    try { return await (both ? viaEcb() : viaWide()); }
+    catch (e) { return await (both ? viaWide() : viaEcb()); }
   }
   // ---- news headlines (news.json is refreshed every three hours by the GitHub job) ----
   const NEWS_TOPICS = [[/\b(?:seizure|seizures|drug|drugs|customs|smuggl\w*|cocaine|narcotics?)\b/i, 'seizures', 'drug seizure'], [/\b(?:tech|technology|ai)\b/i, 'tech', 'technology'], [/\b(?:business|economy|economic|markets?|finance)\b/i, 'business', 'business'], [/\b(?:belgium|belgian|brussels|flemish)\b/i, 'belgium', 'Belgian']];
