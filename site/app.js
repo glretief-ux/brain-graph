@@ -508,7 +508,7 @@ async function groqPickModel() {
   const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
   return ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'].find((m) => ids.includes(m)) || ids[0] || '';
 }
-const IS_GEM = () => /^AIza/.test(GKEY());
+const IS_GEM = () => !!GKEY() && !/^gsk_/.test(GKEY());
 let gemModel = '';
 async function gemCall(model, payload) {
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -2038,10 +2038,10 @@ const wake = (() => {
   };
   btn.addEventListener('click', async () => {
     const k = inp.value.trim();
-    if (!/^(gsk_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_\-]{20,})$/.test(k)) { toast('That does not look like a key. Groq keys start with gsk_, Google Gemini keys start with AIza'); return; }
+    if (!/^[A-Za-z0-9_.\-]{20,}$/.test(k)) { toast('That does not look like a key. Copy the whole key with no spaces.'); return; }
     btn.disabled = true;
     try {
-      const gem = /^AIza/.test(k);
+      const gem = !/^gsk_/.test(k);
       const r = gem ? await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=5&key=' + encodeURIComponent(k)) : await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
       if (!r.ok) throw new Error(r.status === 401 || r.status === 400 || r.status === 403 ? 'This key is not valid' : 'Key check failed (' + r.status + ')');
       localStorage.setItem('brain.groq', k); groqModel = ''; gemModel = '';
