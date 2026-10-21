@@ -613,14 +613,29 @@ const VS = (() => {
     finally { clearTimeout(t); }
   };
   const fail = async (r) => { let m = ''; try { const d = await r.json(); m = d.detail || d.error || ''; } catch (e) {} return new Error((typeof m === 'string' && m) || ('HTTP ' + r.status)); };
+  let vcache = null;
+  const voices = async (force) => {
+    if (vcache && !force) return vcache;
+    const r = await timed(base() + '/v1/audio/voices', { headers: hdr() }, 15000);
+    if (!r.ok) throw await fail(r);
+    const d = await r.json().catch(() => ({}));
+    vcache = Array.isArray(d.voices) ? d.voices : [];
+    return vcache;
+  };
+  // the voice to speak with: the one you chose, else your first saved (cloned/designed) voice, else the plain default
+  const pickVoice = async () => {
+    const v = get('Voice').trim(); if (v) return v;
+    try { const p = (await voices()).find((x) => x.type === 'profile'); if (p) return p.voice_id; } catch (e) { /* use the default */ }
+    return 'alloy';
+  };
   return {
-    get, set, base,
+    get, set, base, voices,
     configured: () => !!base(),
     listen: () => get('Listen') === '1' && !!base(),
     async speak(text) {
       const r = await timed(base() + '/v1/audio/speech', {
         method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()),
-        body: JSON.stringify({ model: 'tts-1', voice: get('Voice').trim() || 'alloy', input: text, response_format: 'wav' })
+        body: JSON.stringify({ model: 'tts-1', voice: await pickVoice(), input: text, response_format: 'wav' })
       }, 90000);
       if (!r.ok) throw await fail(r);
       const blob = await r.blob();
@@ -1608,6 +1623,22 @@ const convo = (() => {
     clr.hidden = !on;
     st.textContent = on ? 'Saved. Pick "VoiceStudio (your PC)" in the Voice list. If the PC is off, Jarvis uses another voice.' : 'Run VoiceStudio on this PC, then enter its address (usually http://localhost:3900).';
   };
+  const pick = $('#vsPick');
+  const fill = async () => {
+    if (!pick) return;
+    if (!VS.configured()) { pick.hidden = true; return; }
+    try {
+      const list = (await VS.voices(true)).filter((v) => v.type === 'profile');
+      if (!list.length) { pick.hidden = true; return; }
+      const cur = VS.get('Voice').trim();
+      pick.replaceChildren(...list.map((v) => { const o = document.createElement('option'); o.value = v.voice_id; o.textContent = (v.name || v.voice_id) + (v.language ? ' (' + v.language + ')' : ''); return o; }));
+      const other = document.createElement('option'); other.value = ''; other.textContent = 'Default voice (changes every time)'; pick.append(other);
+      if (!cur) { VS.set('Voice', list[0].voice_id); voice.value = list[0].voice_id; }
+      pick.value = [...pick.options].some((o) => o.value === VS.get('Voice')) ? VS.get('Voice') : '';
+      pick.hidden = false;
+    } catch (e) { pick.hidden = true; }
+  };
+  if (pick) pick.addEventListener('change', () => { VS.set('Voice', pick.value); voice.value = pick.value; toast(pick.value ? 'Voice saved: ' + pick.selectedOptions[0].textContent : 'Using the default voice'); });
   const hint = (msg) => {
     const https = location.protocol === 'https:' && /^http:/i.test(url.value.trim()) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url.value.trim());
     if (https) return 'This page is https, so the browser blocks a plain http address that is not localhost. Use localhost, or an https address (for example Tailscale Serve).';
@@ -1625,7 +1656,7 @@ const convo = (() => {
     save.disabled = true; st.textContent = 'Testing…';
     try {
       const blob = await VS.speak('VoiceStudio connected. At your service.');
-      voiceBox.reload(); voiceBox.select('__vs'); show();
+      voiceBox.reload(); voiceBox.select('__vs'); show(); fill();
       st.textContent = 'Connected. Jarvis now speaks with VoiceStudio.';
       voiceBox.stop();
       const a = new Audio(URL.createObjectURL(blob)); a.play().catch(() => {});
@@ -1635,10 +1666,10 @@ const convo = (() => {
   clr.addEventListener('click', () => {
     ['Url', 'Voice', 'Key', 'Listen'].forEach((k) => VS.set(k, ''));
     try { if (localStorage.getItem('jarvisVoice') === '__vs') localStorage.removeItem('jarvisVoice'); } catch (e) {}
-    voiceBox.reload(); show();
+    voiceBox.reload(); show(); fill();
   });
   listen.addEventListener('change', () => { if (VS.configured()) VS.set('Listen', listen.checked ? '1' : ''); });
-  show();
+  show(); fill();
 })();
 
 /* ---------- controls ---------- */

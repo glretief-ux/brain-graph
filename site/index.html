@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=37">
+<link rel="stylesheet" href="style.css?v=38">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -53,7 +53,8 @@
     <div class="gkbox vsbox">
       <div class="clabel2">VoiceStudio (your own PC, optional)</div>
       <input id="vsUrl" type="url" placeholder="http://localhost:3900" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <input id="vsVoice" type="text" placeholder="Voice name (default: alloy)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="vsPick" aria-label="VoiceStudio voice" hidden></select>
+      <input id="vsVoice" type="text" placeholder="Voice ID (or pick one above)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <input id="vsKey" type="password" placeholder="API key (only if you set one)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <label class="inline"><input type="checkbox" id="vsListen"> Also use VoiceStudio to hear me (speech to text)</label>
       <div class="grow"><button type="button" id="vsSave" class="gbtn">Save and test</button><button type="button" id="vsClear" class="gbtn" hidden>Remove</button></div>
@@ -119,7 +120,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=37"></script>
-<script src="app.js?v=37"></script>
+<script src="config.js?v=38"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
