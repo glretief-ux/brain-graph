@@ -1144,7 +1144,11 @@ const gg = (() => {
       const ws = nameWords(q);
       const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
       const scored = pool.map((c) => ({ c, s: contactScore(c, ws) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
-      let addr = scored.length ? { name: scored[0].c.name, email: scored[0].c.email } : null;
+      // with a first AND last name ("Barry Retief"), the first name must match too: a shared surname alone is never enough
+      const first = ws[0], strict = ws.length > 1 ? scored.filter((x) => contactScore(x.c, [first]) > 0) : scored;
+      const seenE = new Set(), near = [];
+      for (const x of scored) if (!seenE.has(x.c.email) && !strict.includes(x) && near.length < 3) { seenE.add(x.c.email); near.push((x.c.name ? x.c.name + ' ' : '') + '<' + x.c.email + '>'); }
+      let addr = strict.length ? { name: strict[0].c.name, email: strict[0].c.email } : null;
       if (!addr) {
         const ai = parseAddrs(d.draft.to)[0];
         const typed = ai && norm(q).includes(ai.email);
@@ -1157,7 +1161,7 @@ const gg = (() => {
       panel.classList.remove('closed');
       $('#compose').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       const who = addr ? (addr.name || addr.email) : '';
-      const msg = who ? 'Draft ready for ' + who + '. Check it, then tap Send.' : 'Draft ready, but I could not find the address (' + (book.length ? 'searched ' + book.length + ' contacts' : 'no contacts could be read' + (bookErr ? ': ' + bookErr : '')) + '). Type it in the To box, then tap Send.';
+      const msg = who ? 'Draft ready for ' + who + '. Check it, then tap Send.' : 'Draft ready, but I could not find an address for ' + (ws.length > 1 ? ws.join(' ') : (ws[0] || 'that person')) + ' (' + (book.length ? 'searched ' + book.length + ' contacts' : 'no contacts could be read' + (bookErr ? ': ' + bookErr : '')) + ').' + (near.length ? ' Similar names: ' + near.join('; ') + '.' : '') + ' Type the address in the To box, then tap Send.';
       box.replaceChildren(el('span', null, msg));
       orb.set('idle');
       say(msg);
