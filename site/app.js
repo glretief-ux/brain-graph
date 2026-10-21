@@ -521,15 +521,16 @@ async function gemPick() {
   const ids = ((d && d.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name).replace('models/', ''));
   const ver = (id) => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
   const flash = ids.filter((id) => /^gemini-[\d.]+-flash(-\d+)?$/.test(id)).sort((x, y) => ver(y) - ver(x));
-  const rest = ids.filter((id) => /flash/.test(id) && !/lite|image|tts|live|thinking|robotics|audio/.test(id) && !flash.includes(id));
-  return [...flash, 'gemini-flash-latest', ...rest].filter((v, i, a) => a.indexOf(v) === i);
+  const lite = ids.filter((id) => /^gemini-[\d.]+-flash-lite(-\d+)?$/.test(id)).sort((x, y) => ver(y) - ver(x));
+  const rest = ids.filter((id) => /flash/.test(id) && !/image|tts|live|thinking|robotics|audio/.test(id) && !flash.includes(id) && !lite.includes(id));
+  return [...flash, 'gemini-flash-latest', ...lite, 'gemini-flash-lite-latest', ...rest].filter((v, i, a) => a.indexOf(v) === i);
 }
-const GEM_GONE = /model|not found|not supported|no longer available|deprecated/i;
+const GEM_GONE = /model|not found|not supported|no longer available|deprecated|quota|exceeded|rate.?limit|resource.?exhausted|overloaded|unavailable/i;
 async function gemGenerate(payload) {
   let { r, d } = await gemCall(gemModel || 'gemini-flash-latest', payload);
   if (!r.ok && GEM_GONE.test((d.error && d.error.message) || '')) {
     const tried = [gemModel || 'gemini-flash-latest'];
-    for (const alt of (await gemPick()).slice(0, 8)) {
+    for (const alt of (await gemPick()).slice(0, 12)) {
       if (tried.includes(alt)) continue;
       tried.push(alt);
       ({ r, d } = await gemCall(alt, payload));
