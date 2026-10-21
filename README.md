@@ -120,3 +120,6 @@ A Google Gemini key (starts with `AIza`, free at https://aistudio.google.com/api
 ## Wake phrase
 
 Tick "Wake Jarvis by voice" in the panel and say "Hey Jarvis" (the phrase can be changed). Works while the page is open, best in Chrome or Edge.
+
+## Live information
+With a Gemini key saved in the panel, questions that need current facts ("price of oil today", "weather in Brussels", "latest news on ...") are answered with Google Search built in, and the sources are listed under the answer. With a Groq key, Jarvis tries Groq's web-searching models and falls back to Wikipedia.

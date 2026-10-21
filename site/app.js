@@ -529,6 +529,7 @@ async function gemGenerate(payload) {
   }
   if (!r.ok) throw new Error('Gemini: ' + ((d.error && d.error.message) || 'error ' + r.status));
   const cand = (d.candidates || [])[0];
+  gemGenerate.sources = (((cand && cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((c) => c.web && (c.web.title || c.web.uri)).filter(Boolean));
   return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
 }
 async function groqChatDirect(messages, max_tokens) {
@@ -555,6 +556,31 @@ const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () 
 async function brainFetch(body) {
   if (GKEY()) {
     try {
+      if (body.question && body.live) {                                  // needs current facts: let the AI search the web itself
+        const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
+        const sysLive = 'You are J.A.R.V.I.S., a voice assistant. Today is ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.';
+        const hist = (body.history || []).slice(-4).filter((m) => m && m.content);
+        if (IS_GEM()) {
+          try {
+            const contents = [...hist.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content).slice(0, 800) }] })), { role: 'user', parts: [{ text: String(body.question).slice(0, 800) }] }];
+            while (contents.length && contents[0].role !== 'user') contents.shift();
+            const text = await gemGenerate({ systemInstruction: { parts: [{ text: sysLive }] }, contents, tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 700, temperature: 0.2 } });
+            if (text) {
+              const src = [...new Set(gemGenerate.sources || [])].slice(0, 3);
+              return fakeRes({ answer: text + (src.length ? '\n\nSources: ' + src.join(', ') : '') });
+            }
+          } catch (e) { brainFetch.lastErr = e.message; }
+        } else {
+          for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
+            try {
+              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 500, messages: [{ role: 'system', content: sysLive }, { role: 'user', content: String(body.question).slice(0, 800) }] }) });
+              const d = await r.json().catch(() => ({}));
+              const t = r.ok && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+              if (t) return fakeRes({ answer: String(t).trim() });
+            } catch (e) { /* try the next one */ }
+          }
+        }
+      }
       if (body.question) {
         const ctx = (body.notes || []).slice(0, 9).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 1000)).join('\n\n');
         const msgs = [];
@@ -1644,7 +1670,7 @@ const svc = (() => {
   return { match: (q) => !!find(q), handle };
 })();
 
-const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|today'?s|weather|price of|who is|who was|what is the (?:capital|population)|how much (?:is|does)|score|stock|exchange rate)\b/i;
+const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|right now|today'?s?|tonight|this (?:week|morning)|weather|temperature|forecast|price|prices|cost of|oil|brent|crude|gas|petrol|diesel|gold|silver|bitcoin|btc|ethereum|crypto|stock|stocks|share price|exchange rate|rate of|how much (?:is|does|are)|who won|score|results?|trending|traffic|open now|opening hours|who is|who was|what happened|what's happening)\b/i;
 
 // Fly through the most connected notes and read each one out
 async function tour() {
@@ -1695,7 +1721,8 @@ async function ask(question) {
   S.cited = new Set();
   try {
     let web = [];
-    if (WEB_RE.test(question)) {                                   // needs current information: search the web through the Worker
+    const live = WEB_RE.test(question);
+    if (live && !GKEY()) {                                         // no personal key: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {
         const wr = await brainFetch({ search: question.replace(/^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google)\s+/i, '') });
@@ -1703,7 +1730,7 @@ async function ask(question) {
         web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
       } catch (e) { /* answer without it */ }
     }
-    const r = await brainFetch({ question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history });
+    const r = await brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
