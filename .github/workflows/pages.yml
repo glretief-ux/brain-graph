@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "23 */3 * * *"   # refresh the news headlines every three hours
+    - cron: "7,37 * * * *"   # refresh market prices and news headlines every half hour
 
 permissions:
   contents: read
@@ -31,6 +31,9 @@ jobs:
         run: python scripts/build_graph.py vault site/graph.json
       - name: Fetch news headlines for Jarvis (a failing feed is skipped)
         run: python scripts/fetch_news.py scripts/news_feeds.json site/news.json
+        continue-on-error: true
+      - name: Fetch market prices for Jarvis (gold, oil, bitcoin, indices; failures are skipped)
+        run: python scripts/fetch_markets.py site/markets.json
         continue-on-error: true
       - name: Cache-bust scripts and styles so Safari always loads the newest files
         run: sed -i "s/?v=[0-9a-zA-Z]*/?v=${GITHUB_SHA::7}/g" site/index.html

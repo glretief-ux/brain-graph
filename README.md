@@ -123,3 +123,7 @@ Tick "Wake Jarvis by voice" in the panel and say "Hey Jarvis" (the phrase can be
 
 ## Live information
 With a Gemini key saved in the panel, questions that need current facts ("price of oil today", "weather in Brussels", "latest news on ...") are answered with Google Search built in, and the sources are listed under the answer. With a Groq key, Jarvis tries Groq's web-searching models and falls back to Wikipedia.
+
+## Market prices without any AI key
+
+The GitHub job runs `scripts/fetch_markets.py` every half hour and writes `site/markets.json` (gold, silver, Brent and WTI oil, natural gas, copper, Bitcoin, Ethereum, S&P 500, Dow, Nasdaq, Euro Stoxx 50, BEL 20, EUR/USD). Jarvis answers questions like "price of gold today" straight from that file, so it works on any key, on Gemini's free quota limits, and with no key at all. Prices come from Yahoo Finance with Stooq as backup and can be a few minutes delayed.

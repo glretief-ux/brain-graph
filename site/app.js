@@ -1654,6 +1654,35 @@ const svc = (() => {
     const top = list.slice(0, 5);
     return note + 'Top ' + (used[1] === 'world' ? '' : used[2] + ' ') + 'headlines, updated ' + ago(d.updated) + ':\n' + top.map((x) => '• ' + x.title.replace(/\s+-\s+[^-]{2,40}$/, '') + (x.source ? ' (' + x.source.replace(/^www\./, '') + ')' : '')).join('\n');
   }
+  // ---- market prices (markets.json is refreshed every half hour by the GitHub job; needs no AI key) ----
+  const MKT = [
+    [/\bbrent\b/i, ['brent']], [/\bwti\b|west texas/i, ['wti']],
+    [/\b(?:oil|crude|petroleum)\b/i, ['brent', 'wti']],
+    [/\b(?:ttf|european gas|eu gas|dutch gas)\b/i, ['ttf']], [/\b(?:natural gas|nat gas|gas price|gas prices)\b/i, ['gas', 'ttf']],
+    [/\bgold\b/i, ['gold']], [/\bsilver\b/i, ['silver']], [/\bcopper\b/i, ['copper']],
+    [/\b(?:bitcoin|btc)\b/i, ['bitcoin']], [/\b(?:ethereum|ether|eth)\b/i, ['ethereum']],
+    [/\bs\s?&\s?p\b|\bsp500\b|\bs and p\b/i, ['sp500']], [/\bdow\b/i, ['dow']], [/\bnasdaq\b/i, ['nasdaq']],
+    [/\bstoxx\b/i, ['eurostoxx']], [/\bbel\s?20\b/i, ['bel20']],
+    [/\b(?:stock market|stock markets|the markets?|markets overview|how are the markets)\b/i, ['sp500', 'eurostoxx', 'bel20', 'bitcoin', 'gold', 'brent']]
+  ];
+  const mktKeys = (q) => { const out = []; for (const [re, keys] of MKT) if (re.test(q)) for (const k of keys) if (!out.includes(k)) out.push(k); return (out.includes('brent') || out.includes('wti')) && /\b(?:brent|wti|west texas)\b/i.test(q) ? out.filter((k) => k !== (/\bbrent\b/i.test(q) ? 'wti' : 'brent') || (/\bbrent\b/i.test(q) && /\bwti\b/i.test(q))) : out; };
+  const isMarket = (q) => mktKeys(q).length > 0 && /\b(?:price|prices|cost|worth|trading|how much|what(?:'s| is)|rate|quote|level|doing|how are|how is|how's|today|now|current(?:ly)?|right now|latest|per barrel|per ounce|ounce|barrel)\b/i.test(q) && !/\b(?:buy|sell|invest|should i|forecast|predict|why|history|write|draft|compose|email|mail)\b/i.test(q) && !/\b(?:oil|gas)\b.*\b(?:change|filter|paint|heater|boiler|lamp|bill|meter)\b/i.test(q);
+  const fmtNum = (n) => Number(n).toLocaleString('en-GB', { maximumFractionDigits: n < 10 ? 4 : 2, minimumFractionDigits: n < 10 ? 2 : 0 });
+  const money = (c) => ({ USD: '$', EUR: '€', GBP: '£' }[c] || '');
+  async function markets(q) {
+    let d;
+    try { const r = await fetch('markets.json?t=' + Math.floor(Date.now() / 300000)); if (!r.ok) throw new Error('missing'); d = await r.json(); }
+    catch (e) { return 'The price file is not available yet. Open the repository, Actions, "Build graph and deploy to Pages", and run it once.'; }
+    const have = d.quotes || {}, keys = mktKeys(q).filter((k) => have[k]);
+    if (!keys.length) return 'I could not read that price at the last update (' + ago(d.updated) + '). The update runs every half hour.';
+    const lines = keys.map((k) => {
+      const x = have[k], ch = x.change_pct;
+      return x.label + ': ' + money(x.currency) + fmtNum(x.price) + (x.currency && !money(x.currency) ? ' ' + x.currency : '') + (x.unit ? ' ' + x.unit : '') + (ch == null ? '' : ', ' + (ch >= 0 ? 'up ' : 'down ') + Math.abs(ch).toFixed(1) + '% on the day');
+    });
+    const tms = keys.map((k) => have[k].time).filter(Boolean).sort().pop();
+    const asof = tms ? 'as of ' + new Date(tms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'updated ' + ago(d.updated);
+    return (lines.length === 1 ? lines[0] : lines.join('\n')) + '\n(' + asof + '; futures and spot prices can be a few minutes delayed.)';
+  }
   // ---- register services here: { match(question) -> bool, run(question) -> Promise<string> } ----
   const SERVICES = [
     { match: isTimerCancel, run: timerCancel },
@@ -1663,6 +1692,7 @@ const svc = (() => {
     { match: isWeather, run: weather },
     { match: isTime, run: time },
     { match: (q) => !!parseConvert(q), run: convert },
+    { match: isMarket, run: markets },
     { match: isNews, run: news }
   ];
   const find = (q) => SERVICES.find((x) => x.match(q));
