@@ -116,3 +116,7 @@ Cloudflare's free allowance is 10,000 units a day. For a separate allowance, cre
 Open the side panel, paste a free Groq key (https://console.groq.com/keys) under "Free AI key" and tap Save key. Answers, email drafts, calendar events and listening then run straight from your browser to Groq. The key is kept only in that browser and is never sent to this repo. The Worker is only used for the spoken AI voice.
 
 A Google Gemini key (starts with `AIza`, free at https://aistudio.google.com/apikey) works in the same box as a Groq key.
+
+## Wake phrase
+
+Tick "Wake Jarvis by voice" in the panel and say "Hey Jarvis" (the phrase can be changed). Works while the page is open, best in Chrome or Edge.

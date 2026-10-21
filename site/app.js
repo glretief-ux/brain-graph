@@ -1911,6 +1911,95 @@ const convo = (() => {
   return { supported, toggle: () => (on ? stop() : start()), isOn: () => on };
 })();
 
+/* ---------- wake phrase: say "Hey Jarvis" while this page is open (Chrome/Edge on PC work best) ---------- */
+const wake = (() => {
+  const SRW = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const KEY_ON = 'brain.wake', KEY_PH = 'brain.wakePhrase', DEFAULT = 'hey jarvis';
+  const store = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
+  const load = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const WORD = { hey: '(?:hey|hay|hi|hello|okay|ok|a)', jarvis: '(?:jarvis|jarvus|jarves|jervis|jarvas|jarvic)' };
+  // Build a forgiving matcher: speech recognition often mishears "Jarvis" and "Hey"
+  function matcher(phrase) {
+    const words = norm(phrase).split(' ').filter(Boolean);
+    if (!words.length) return null;
+    const part = (w) => WORD[w] || w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = words.map((w, i) => (i === 0 && w === 'hey' && words.length > 1 ? '(?:' + part(w) + '[ ,]+)?' : part(w) + (i < words.length - 1 ? '[ ,]+' : ''))).join('');
+    return new RegExp('(?:^|\\b)' + re + '\\b[ ,.:!?]*');
+  }
+  function split(text, phrase) {                                         // -> null, or the words said after the wake phrase
+    const re = matcher(phrase);
+    if (!re) return null;
+    const t = String(text || '').toLowerCase().replace(/[“”"]/g, '').trim();
+    const m = re.exec(t.replace(/[,.!?]+(?=\s|$)/g, ' ').replace(/\s+/g, ' '));
+    if (!m) return null;
+    return t.replace(/[,.!?]+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').slice(m.index + m[0].length).trim();
+  }
+  let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
+  const say3 = (m) => { status = m; const e = document.getElementById('wakeStatus'); if (e) e.textContent = m; };
+  const busy = () => convo.isOn() || orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) || Date.now() - lastWake < 4000 || document.hidden;
+
+  function onHeard(text) {
+    const rest = split(text, phrase);
+    if (rest == null) return;
+    lastWake = Date.now(); fails = 0;
+    stopRec();
+    voiceBox.unlock();
+    $('#speak').checked = true;
+    if (rest.length > 2) { toast('Heard: ' + rest); $('#askInput').value = ''; ask(rest); return; }   // "hey jarvis what is the weather"
+    toast('Yes?');
+    if (convo.supported()) convo.toggle(); else orb.el.click();
+  }
+  function startRec() {
+    if (!SRW || rec || !enabled) return;
+    const r = new SRW();
+    r.lang = navigator.language || 'en-US';
+    r.continuous = true; r.interimResults = false;
+    r.onstart = () => { running = true; say3('Listening for "' + phrase + '".'); };
+    r.onresult = (ev) => { for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) onHeard(ev.results[i][0].transcript); };
+    r.onerror = (ev) => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); }
+      else if (ev.error === 'network') { fails++; say3('Wake phrase needs an internet connection.'); }
+      else if (ev.error !== 'no-speech' && ev.error !== 'aborted') fails++;
+    };
+    r.onend = () => { running = false; if (rec === r) rec = null; };
+    rec = r;
+    try { r.start(); } catch (e) { rec = null; }
+  }
+  function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
+  function tick() {
+    if (!enabled) { stopRec(); return; }
+    if (busy()) { if (rec) stopRec(); return; }
+    if (fails > 6) { enabled = false; store(KEY_ON, '0'); sync(); say3('Wake phrase stopped: the browser kept refusing speech recognition. Tap the orb instead.'); return; }
+    if (!rec) startRec();
+  }
+  let box, ph;
+  function sync() { if (box) box.checked = enabled; if (!enabled) { stopRec(); if (!/blocked|stopped/.test(status)) say3(''); } }
+  function init() {
+    box = document.getElementById('wakeOn'); ph = document.getElementById('wakePhrase');
+    const wrap = document.getElementById('wakeBox');
+    if (!box) return;
+    if (!SRW) { if (wrap) wrap.hidden = true; return; }
+    ph.value = phrase; box.checked = enabled;
+    box.addEventListener('change', () => {
+      enabled = box.checked; store(KEY_ON, enabled ? '1' : '0'); fails = 0;
+      if (enabled) { voiceBox.unlock(); say3('Starting…'); } else say3('');
+      tick();
+    });
+    const savePh = () => {
+      const v = norm(ph.value) || DEFAULT; phrase = v; ph.value = v; store(KEY_PH, v);
+      stopRec(); if (enabled) say3('Listening for "' + v + '".');
+    };
+    ph.addEventListener('change', savePh);
+    timer = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    if (enabled) say3('Wake phrase is on. Click anywhere on the page once so the browser allows the microphone and voice.');
+    if (enabled) document.addEventListener('click', function once() { document.removeEventListener('click', once); voiceBox.unlock(); tick(); }, { once: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+  return { split, matcher, norm };
+})();
+
 /* ---------- Free AI key (stored only in this browser) ---------- */
 (() => {
   const inp = $('#gkKey'), btn = $('#gkSave'), st = $('#gkStatus'), clr = $('#gkClear');

@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
-<link rel="stylesheet" href="style.css?v=43">
+<link rel="stylesheet" href="style.css?v=45">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -62,6 +62,11 @@
     </div>
     <p id="voiceStatus" class="voice" style="color:#9fb3c8">Tap the orb to talk.</p>
     <label class="voice">Microphone <select id="mic" aria-label="Microphone"><option value="">Default (tap the orb to list)</option></select></label>
+    <div id="wakeBox" class="gkbox">
+      <label class="inline"><input type="checkbox" id="wakeOn"> Wake Jarvis by voice (page must stay open)</label>
+      <input id="wakePhrase" type="text" placeholder="hey jarvis" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Wake phrase">
+      <p id="wakeStatus" class="voice"></p>
+    </div>
     <div id="evcard" hidden>
       <div class="clabel">Calendar event (nothing is added until you tap Add)</div>
       <input id="eTitle" type="text" placeholder="Title" autocomplete="off">
@@ -120,7 +125,7 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=43"></script>
-<script src="app.js?v=43"></script>
+<script src="config.js?v=45"></script>
+<script src="app.js?v=45"></script>
 </body>
 </html>
