@@ -995,14 +995,31 @@ const gg = (() => {
   const lev1 = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, d = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++d > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return d + (a.length - i) + (b.length - j) <= 1; };
   // word matches a contact's name/address: exact piece, or one letter off (Elize / Elise)
   const hit = (hay, w) => hay.includes(w) || (w.length >= 4 && hay.split(/[^a-z0-9]+/).some((t) => t.length >= 4 && lev1(t, w)));
+  // Words in the request that are NOT a person's name (so "pick" never matches "Pick n Pay")
+  const COMMON = new Set(['pick','picks','pickup','tomorrow','today','tonight','morning','afternoon','evening','remember','remind','reminder','wondering','could','would','should','look','looking','forward','best','regards','thanks','thank','hello','hey','monday','tuesday','wednesday','thursday','friday','saturday','sunday','week','weekend','next','meeting','tell','ask','know','let','just','also','need','needs','want','wants','about','when','where','what','which','have','will','can','you','your','mine','know','coming','come','bring','ready','time','late','early','noon','night','minutes','hour','hours']);
+  const isStop = (w) => STOP.has(w) || COMMON.has(w);
+  // Which words in the request name the recipient? Capitalised words first ("Eliza"), then the word right after "to/for/email/tell/ask", then anything left.
+  function nameWords(q) {
+    const orig = String(q || '').split(/[^\p{L}\p{N}'@.-]+/u).filter(Boolean);
+    const caps = orig.filter((w, i) => /^\p{Lu}/u.test(w) && w.length > 2 && !isStop(norm(w)) && !(i === 0 && /^(please|can|could|would|send|email|write|draft|hey|jarvis)$/i.test(w))).map(norm);
+    if (caps.length) return [...new Set(caps)];
+    const m = norm(q).match(/\b(?:to|for|tell|ask|email|e-?mail|mail|message|text)\s+(?:to\s+|for\s+)?([a-z0-9@.'-]{3,})/g);
+    if (m) for (const frag of m) { const w = frag.trim().split(/\s+/).pop(); if (w && !isStop(w)) return [w]; }
+    return norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !isStop(w));
+  }
+  // exact name part 3, one-letter-off name part 2, address-only match 1
+  function contactScore(c, ws) {
+    const nm = norm(c.name), parts = nm.split(/[^a-z0-9]+/).filter(Boolean), em = norm(c.email);
+    return ws.reduce((t, w) => t + (parts.includes(w) ? 3 : (w.length >= 4 && parts.some((x) => x.length >= 4 && lev1(x, w))) ? 2 : (nm.includes(w) || em.split('@')[0].split(/[^a-z0-9]+/).includes(w)) ? 1 : 0), 0);
+  }
   async function getContacts(q) {
     const map = new Map();
     const add = (list) => list.forEach((a) => { if (!map.has(a.email) || (a.name && !map.get(a.email))) map.set(a.email, a.name); });
     // 1) anyone in your Contacts / past correspondents whose name or address matches a word in the request
     try { await loadBook(); } catch (e) { /* fall back to recent mail below */ }
-    const words = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
+    const words = nameWords(q);
     if (words.length && book.length) {
-      const hits = book.map((c) => { const hay = norm(c.name + ' ' + c.email); return { c, s: words.reduce((t, w) => t + (hit(hay, w) ? 1 : 0), 0) }; }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 25);
+      const hits = book.map((c) => ({ c, s: contactScore(c, words) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 25);
       hits.forEach((x) => map.set(x.c.email, x.c.name));
     }
     // 2) recent senders and recipients
@@ -1117,9 +1134,9 @@ const gg = (() => {
       if (!r.ok || !d.draft) throw new Error(d.error || 'No draft (' + r.status + ')');
       const f = cf();
       // pick the recipient ourselves: the best local match for the names in the request wins; the AI's guess is only trusted if it was spelled out or really matches a name
-      const ws = norm(q).split(/[^a-z0-9@.]+/).filter((w) => w.length > 2 && !STOP.has(w));
+      const ws = nameWords(q);
       const pool = [...book, ...list.flatMap((x) => parseAddrs(x))];
-      const scored = pool.map((c) => ({ c, s: ws.reduce((t, w) => t + (hit(norm(c.name + ' ' + c.email), w) ? 1 : 0), 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+      const scored = pool.map((c) => ({ c, s: contactScore(c, ws) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
       let addr = scored.length ? { name: scored[0].c.name, email: scored[0].c.email } : null;
       if (!addr) {
         const ai = parseAddrs(d.draft.to)[0];
