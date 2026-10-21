@@ -1,0 +1,7 @@
+{
+  "world": ["https://feeds.bbci.co.uk/news/world/rss.xml"],
+  "tech": ["https://feeds.bbci.co.uk/news/technology/rss.xml"],
+  "business": ["https://feeds.bbci.co.uk/news/business/rss.xml"],
+  "belgium": ["https://www.brusselstimes.com/feed", "https://www.vrt.be/vrtnws/en.rss.xml"],
+  "seizures": ["https://news.google.com/rss/search?q=drug+seizure+customs&hl=en-GB&gl=GB&ceid=GB:en", "https://news.google.com/rss/search?q=cocaine+seizure+port&hl=en-GB&gl=GB&ceid=GB:en"]
+}

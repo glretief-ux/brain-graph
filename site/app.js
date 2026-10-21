@@ -1388,11 +1388,188 @@ const svc = (() => {
     const dt = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: tz }).format(now);
     return /\b(?:date|day)\b/i.test(q) && !/\btime\b/i.test(q) ? 'It is ' + dt + label + '.' : 'It is ' + t + ' on ' + dt + label + '.';
   }
+  // ---- timers and reminders (they ring while this page is open) ----
+  const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60 };
+  const durRe = /(\d+(?:[.,]\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/gi;
+  function parseDuration(q) {
+    if (/\bhalf an? hour\b|\bhalf hour\b/i.test(q)) return 30 * 60000;
+    if (/\bquarter of an hour\b|\ba quarter hour\b/i.test(q)) return 15 * 60000;
+    let ms = 0, any = false, m;
+    durRe.lastIndex = 0;
+    while ((m = durRe.exec(q))) {
+      const n = /^\d/.test(m[1]) ? parseFloat(m[1].replace(',', '.')) : NUMW[m[1].toLowerCase()];
+      const u = m[2].toLowerCase()[0], unit = u === 's' ? 1000 : u === 'm' ? 60000 : 3600000;
+      ms += n * unit; any = true;
+      if (/^\s*and\s+(?:a\s+)?half\b/i.test(q.slice(durRe.lastIndex))) ms += unit / 2;
+    }
+    return any ? ms : 0;
+  }
+  function parseClock(q) {
+    const m = q.match(/\bat\s+(\d{1,2})(?:[:.h](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?(?![\d:])/i);
+    if (!m) return 0;
+    let h = parseInt(m[1], 10); const min = m[2] ? parseInt(m[2], 10) : 0, ap = m[3] ? m[3][0].toLowerCase() : '';
+    if (h > 24 || min > 59) return 0;
+    const now = new Date(), tomorrow = /\btomorrow\b/i.test(q);
+    const at = (hh) => { const d = new Date(now); d.setHours(hh % 24, min, 0, 0); if (tomorrow) d.setDate(d.getDate() + 1); return d; };
+    let cands;
+    if (ap) cands = [at(ap === 'p' ? (h % 12) + 12 : h % 12)];
+    else if (h === 0 || h > 12) cands = [at(h)];
+    else cands = [at(h % 12), at((h % 12) + 12)];
+    let d = cands.filter((c) => c.getTime() > now.getTime() + 1000).sort((a, b) => a - b)[0];
+    if (!d && !tomorrow) { d = cands[0]; d.setDate(d.getDate() + 1); }
+    return d ? d.getTime() : 0;
+  }
+  const tstore = (v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem('brain.timers') || '[]'); localStorage.setItem('brain.timers', JSON.stringify(v)); } catch (e) { return []; } return v; };
+  let tlist = [], tAudio = null; const thandle = new Map();
+  const fmtIn = (ms) => { const s = Math.max(1, Math.round(ms / 1000)); if (s < 90) return s + ' seconds'; const m = Math.round(s / 60); if (m < 90) return m + ' minutes'; const h = Math.floor(m / 60), r = m % 60; return h + ' hour' + (h > 1 ? 's' : '') + (r ? ' ' + r + ' minutes' : ''); };
+  const fmtAt = (t) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  function beep() {
+    try {
+      if (!tAudio) { const C = window.AudioContext || window.webkitAudioContext; if (C) tAudio = new C(); }
+      if (!tAudio) return; tAudio.resume();
+      for (let i = 0; i < 4; i++) { const o = tAudio.createOscillator(), g = tAudio.createGain(), t0 = tAudio.currentTime + i * 0.32; o.frequency.value = i % 2 ? 660 : 880; g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.4, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.26); o.connect(g); g.connect(tAudio.destination); o.start(t0); o.stop(t0 + 0.28); }
+    } catch (e) { /* silent */ }
+    try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) { /* ignore */ }
+  }
+  function fire(t) {
+    tlist = tlist.filter((x) => x.id !== t.id); tstore(tlist); thandle.delete(t.id);
+    const text = t.label ? 'Reminder: ' + t.label + '.' : t.kind === 'timer' ? 'Your timer is done.' : 'This is your reminder.';
+    beep(); toast(text);
+    $('#answer').replaceChildren(el('span', null, text));
+    panel.classList.remove('closed');
+    const sp = $('#speak'), was = sp.checked; sp.checked = true; say(text); sp.checked = was;
+  }
+  function arm(t) {
+    const wait = t.at - Date.now();
+    if (wait <= 0) { fire(t); return; }
+    thandle.set(t.id, setTimeout(() => fire(t), Math.min(wait, 2147483000)));
+  }
+  function restoreTimers() {
+    tlist = tstore();
+    const now = Date.now();
+    for (const t of tlist.slice()) { if (t.at < now - 120000) { tlist = tlist.filter((x) => x.id !== t.id); toast('A reminder was missed while the page was closed: ' + (t.label || 'timer')); } else arm(t); }
+    tstore(tlist);
+  }
+  const remind = (q) => /\bremind me\b/i.test(q);
+  const isTimerCmd = (q) => !/\bcalendar\b/i.test(q) && ((remind(q)) || (/\b(?:timer|alarm)\b/i.test(q) && !/\b(?:cancel|stop|clear|delete|remove|list|show|what|which|how long|any)\b/i.test(q))) && (parseDuration(q) > 0 || parseClock(q) > 0);
+  const isTimerList = (q) => !remind(q) && /\b(?:what|which|list|show|how long|any|do i have)\b[^.?!]*\b(?:timers?|alarms?|reminders?)\b/i.test(q) && !/\bcalendar\b/i.test(q);
+  const isTimerCancel = (q) => !remind(q) && /\b(?:cancel|stop|clear|delete|remove|turn off)\b[^.?!]*\b(?:timers?|alarms?|reminders?)\b/i.test(q) && !/\bcalendar\b/i.test(q);
+  async function timerAdd(q) {
+    const dur = parseDuration(q), clock = dur ? 0 : parseClock(q);
+    const at = dur ? Date.now() + dur : clock;
+    let label = '';
+    if (/\bremind me\b/i.test(q)) {
+      const rest = q.replace(/^.*?\bremind me\b/i, '').replace(durRe, ' ').replace(/\b(?:in|at|for|tomorrow|today|tonight)\b/gi, ' ').replace(/\b\d{1,2}(?:[:.h]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\b/gi, ' ').replace(/\s+/g, ' ').trim();
+      const m = rest.match(/\bto\s+(.+)$/i) || rest.match(/\babout\s+(.+)$/i);
+      label = (m ? m[1] : rest).replace(/[.!?]+$/, '').trim();
+      label = label.replace(/\bmy\b/gi, 'your').replace(/\bme\b/gi, 'you').replace(/\bi\b/g, 'you');
+    }
+    const t = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), at, label, kind: /\bremind me\b/i.test(q) ? 'reminder' : 'timer' };
+    try { if (!tAudio) { const C = window.AudioContext || window.webkitAudioContext; if (C) tAudio = new C(); } if (tAudio) tAudio.resume(); } catch (e) { /* ignore */ }
+    tlist.push(t); tstore(tlist); arm(t);
+    const when = dur ? 'in ' + fmtIn(dur) : 'at ' + fmtAt(at) + (new Date(at).toDateString() !== new Date().toDateString() ? ' tomorrow' : '');
+    return (t.kind === 'timer' ? 'Timer set ' + when + '.' : 'Okay, I will remind you ' + (label ? 'to ' + label + ' ' : '') + when + '.') + ' Keep this page open so I can ring.';
+  }
+  async function timerList() {
+    if (!tlist.length) return 'You have no timers or reminders running.';
+    const now = Date.now();
+    return tlist.slice().sort((a, b) => a.at - b.at).map((t) => (t.label ? 'Reminder to ' + t.label : 'Timer') + ' in ' + fmtIn(t.at - now) + ' (at ' + fmtAt(t.at) + ')').join('. ') + '.';
+  }
+  async function timerCancel() {
+    const n = tlist.length;
+    tlist.forEach((t) => clearTimeout(thandle.get(t.id))); thandle.clear(); tlist = []; tstore(tlist);
+    return n ? 'Cancelled ' + n + (n > 1 ? ' timers and reminders.' : ' timer or reminder.') : 'You had no timers or reminders running.';
+  }
+  // ---- currency (ECB rates through frankfurter.dev) and unit conversion ----
+  const CUR_ALIAS = [
+    ['south african rand', 'ZAR'], ['rand', 'ZAR'], ['zar', 'ZAR'], ['euros', 'EUR'], ['euro', 'EUR'], ['eur', 'EUR'],
+    ['us dollars', 'USD'], ['us dollar', 'USD'], ['american dollars', 'USD'], ['dollars', 'USD'], ['dollar', 'USD'], ['bucks', 'USD'], ['usd', 'USD'],
+    ['british pounds', 'GBP'], ['british pound', 'GBP'], ['pounds sterling', 'GBP'], ['sterling', 'GBP'], ['quid', 'GBP'], ['gbp', 'GBP'],
+    ['canadian dollars', 'CAD'], ['canadian dollar', 'CAD'], ['cad', 'CAD'], ['australian dollars', 'AUD'], ['australian dollar', 'AUD'], ['aud', 'AUD'],
+    ['new zealand dollars', 'NZD'], ['nzd', 'NZD'], ['hong kong dollars', 'HKD'], ['hkd', 'HKD'], ['singapore dollars', 'SGD'], ['sgd', 'SGD'],
+    ['swiss francs', 'CHF'], ['swiss franc', 'CHF'], ['francs', 'CHF'], ['franc', 'CHF'], ['chf', 'CHF'],
+    ['japanese yen', 'JPY'], ['yen', 'JPY'], ['jpy', 'JPY'], ['yuan', 'CNY'], ['renminbi', 'CNY'], ['cny', 'CNY'], ['rmb', 'CNY'],
+    ['indian rupees', 'INR'], ['rupees', 'INR'], ['rupee', 'INR'], ['inr', 'INR'], ['zloty', 'PLN'], ['pln', 'PLN'],
+    ['swedish krona', 'SEK'], ['sek', 'SEK'], ['norwegian krone', 'NOK'], ['nok', 'NOK'], ['danish krone', 'DKK'], ['dkk', 'DKK'],
+    ['czech koruna', 'CZK'], ['czk', 'CZK'], ['forint', 'HUF'], ['huf', 'HUF'], ['turkish lira', 'TRY'], ['lira', 'TRY'], ['try', 'TRY'],
+    ['brazilian real', 'BRL'], ['reais', 'BRL'], ['brl', 'BRL'], ['mexican pesos', 'MXN'], ['pesos', 'MXN'], ['peso', 'MXN'], ['mxn', 'MXN'],
+    ['korean won', 'KRW'], ['won', 'KRW'], ['krw', 'KRW'], ['baht', 'THB'], ['thb', 'THB'], ['rupiah', 'IDR'], ['idr', 'IDR'], ['shekels', 'ILS'], ['shekel', 'ILS'], ['ils', 'ILS'],
+    ['ringgit', 'MYR'], ['myr', 'MYR'], ['philippine pesos', 'PHP'], ['php', 'PHP'], ['lei', 'RON'], ['ron', 'RON'], ['icelandic krona', 'ISK'], ['isk', 'ISK']
+  ];
+  const curOf = (w) => { const hit = CUR_ALIAS.find((x) => x[0] === w); return hit ? hit[1] : ''; };
+  const U = (type, f) => ({ type, f });
+  const UNITS = {
+    m: U('len', 1), meter: U('len', 1), meters: U('len', 1), metre: U('len', 1), metres: U('len', 1), km: U('len', 1000), kilometer: U('len', 1000), kilometers: U('len', 1000), kilometre: U('len', 1000), kilometres: U('len', 1000),
+    cm: U('len', 0.01), centimeter: U('len', 0.01), centimeters: U('len', 0.01), centimetre: U('len', 0.01), centimetres: U('len', 0.01), mm: U('len', 0.001), millimeter: U('len', 0.001), millimeters: U('len', 0.001), millimetres: U('len', 0.001),
+    mile: U('len', 1609.344), miles: U('len', 1609.344), mi: U('len', 1609.344), foot: U('len', 0.3048), feet: U('len', 0.3048), ft: U('len', 0.3048), inch: U('len', 0.0254), inches: U('len', 0.0254), yard: U('len', 0.9144), yards: U('len', 0.9144), yd: U('len', 0.9144),
+    kg: U('mass', 1), kilo: U('mass', 1), kilos: U('mass', 1), kilogram: U('mass', 1), kilograms: U('mass', 1), g: U('mass', 0.001), gram: U('mass', 0.001), grams: U('mass', 0.001), lb: U('mass', 0.45359237), lbs: U('mass', 0.45359237), pound: U('mass', 0.45359237), pounds: U('mass', 0.45359237),
+    oz: U('mass', 0.028349523), ounce: U('mass', 0.028349523), ounces: U('mass', 0.028349523), stone: U('mass', 6.35029318), tonne: U('mass', 1000), tonnes: U('mass', 1000),
+    l: U('vol', 1), litre: U('vol', 1), litres: U('vol', 1), liter: U('vol', 1), liters: U('vol', 1), ml: U('vol', 0.001), millilitre: U('vol', 0.001), millilitres: U('vol', 0.001), gallon: U('vol', 3.785411784), gallons: U('vol', 3.785411784), cup: U('vol', 0.2365882365), cups: U('vol', 0.2365882365),
+    kph: U('spd', 1 / 3.6), kmh: U('spd', 1 / 3.6), 'km/h': U('spd', 1 / 3.6), mph: U('spd', 0.44704), knots: U('spd', 0.514444), knot: U('spd', 0.514444), 'm/s': U('spd', 1),
+    celsius: U('temp', 'c'), centigrade: U('temp', 'c'), fahrenheit: U('temp', 'f'), kelvin: U('temp', 'k'), '°c': U('temp', 'c'), '°f': U('temp', 'f')
+  };
+  const normUnit = (w) => w.toLowerCase().replace(/degrees?\s*/g, '').replace(/^of\s+/, '').replace(/\bper hour\b/, '').replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim()
+    .replace(/^(?:kilometres|kilometers|kilometre|kilometer)\s*$/, (m) => m).replace(/^miles per hour$/, 'mph').replace(/^kilometres per hour$|^kilometers per hour$/, 'kph');
+  const toTemp = (v, from, to) => { const c = from === 'c' ? v : from === 'f' ? (v - 32) * 5 / 9 : v - 273.15; return to === 'c' ? c : to === 'f' ? c * 9 / 5 + 32 : c + 273.15; };
+  const num = (v) => { const a = Math.abs(v); const d = a >= 100 ? 2 : a >= 1 ? 2 : 4; return Number(v.toFixed(d)).toLocaleString('en-GB', { maximumFractionDigits: d }); };
+  function parseConvert(q) {
+    let t = q.toLowerCase().replace(/€\s*(\d[\d.,]*)/g, '$1 euro').replace(/\$\s*(\d[\d.,]*)/g, '$1 usd').replace(/£\s*(\d[\d.,]*)/g, '$1 gbp').replace(/(\d),(\d{3})\b/g, '$1$2').replace(/(\d),(\d)\b/g, '$1.$2');
+    t = t.replace(/\b(?:please|jarvis|hey|ok|okay|can you|could you|tell me|what is|what's|whats|how much is|how much|convert|calculate|change|what are)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    let m = t.match(/^(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s+(?:to|in|into|as)\s+([a-z°][a-z°/ ]*?)\s*[?.!]*$/);
+    let amount, a, b;
+    if (m) { amount = parseFloat(m[1]); a = normUnit(m[2]); b = normUnit(m[3]); }
+    else {
+      m = t.match(/^how many\s+([a-z°][a-z°/ ]*?)\s+(?:is|are|in)\s+(?:an?\s+)?(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/) || t.match(/^(?:how many\s+)?([a-z°][a-z°/ ]*?)\s+(?:is|are|in)\s+(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/);
+      if (!m) return null;
+      amount = parseFloat(m[2]); a = normUnit(m[3]); b = normUnit(m[1]);
+    }
+    if (!isFinite(amount) || !a || !b || a === b) return null;
+    let ca = curOf(a), cb = curOf(b);
+    if (!ca && /^pounds?$/.test(a) && cb) ca = 'GBP';
+    if (!cb && /^pounds?$/.test(b) && ca) cb = 'GBP';
+    if (ca && cb) return { kind: 'cur', amount, from: ca, to: cb };
+    const ua = UNITS[a], ub = UNITS[b];
+    if (ua && ub && ua.type === ub.type) return { kind: 'unit', amount, a, b, ua, ub };
+    return null;
+  }
+  async function convert(q) {
+    const c = parseConvert(q);
+    if (c.kind === 'unit') {
+      const v = c.ua.type === 'temp' ? toTemp(c.amount, c.ua.f, c.ub.f) : c.amount * c.ua.f / c.ub.f;
+      const nm = (x) => (c.ua.type === 'temp' ? 'degrees ' : '') + x.replace('°', ''); return num(c.amount) + ' ' + nm(c.a) + ' is ' + num(v) + ' ' + nm(c.b) + '.';
+    }
+    if (c.from === c.to) return num(c.amount) + ' ' + c.from + ' is ' + num(c.amount) + ' ' + c.to + '.';
+    const d = await getJSON('https://api.frankfurter.dev/v1/latest?amount=' + c.amount + '&base=' + c.from + '&symbols=' + c.to);
+    const v = d.rates && d.rates[c.to];
+    if (v == null) throw new Error('no rate for ' + c.to);
+    const rate = v / c.amount;
+    return num(c.amount) + ' ' + c.from + ' is ' + num(v) + ' ' + c.to + ' (1 ' + c.from + ' = ' + (rate >= 1 ? rate.toFixed(3) : rate.toFixed(4)) + ' ' + c.to + ', ECB rate of ' + d.date + ').';
+  }
+  // ---- news headlines (news.json is refreshed every three hours by the GitHub job) ----
+  const NEWS_TOPICS = [[/\b(?:seizure|seizures|drug|drugs|customs|smuggl\w*|cocaine|narcotics?)\b/i, 'seizures', 'drug seizure'], [/\b(?:tech|technology|ai)\b/i, 'tech', 'technology'], [/\b(?:business|economy|economic|markets?|finance)\b/i, 'business', 'business'], [/\b(?:belgium|belgian|brussels|flemish)\b/i, 'belgium', 'Belgian']];
+  const isNews = (q) => /\b(?:news|headlines?)\b/i.test(q) && !/\b(?:write|draft|compose|email|e-?mail|mail|newsletter|about|regarding|concerning|on)\b/i.test(q);
+  const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso)) / 60000), pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's') + ' ago'; return m < 60 ? pl(Math.max(m, 1), 'minute') : m < 2880 ? pl(Math.round(m / 60), 'hour') : pl(Math.round(m / 1440), 'day'); };
+  async function news(q) {
+    let d;
+    try { const r = await fetch('news.json?t=' + Math.floor(Date.now() / 600000)); if (!r.ok) throw new Error('missing'); d = await r.json(); }
+    catch (e) { return 'The news file is not available yet. It is created by the scheduled GitHub job: open the repository, Actions, "Build graph and deploy to Pages", and run it once.'; }
+    const topic = NEWS_TOPICS.find((x) => x[0].test(q)) || ['', 'world', 'world'];
+    let list = (d.topics && d.topics[topic[1]]) || [], note = '', used = topic;
+    if (!list.length) { list = (d.topics && d.topics.world) || []; note = 'I found no ' + topic[2] + ' headlines, so here is the world news. '; used = ['', 'world', 'world']; }
+    if (!list.length) return 'No headlines are available right now. The feeds could not be read at the last update.';
+    const top = list.slice(0, 5);
+    return note + 'Top ' + (used[1] === 'world' ? '' : used[2] + ' ') + 'headlines, updated ' + ago(d.updated) + ':\n' + top.map((x) => '• ' + x.title.replace(/\s+-\s+[^-]{2,40}$/, '') + (x.source ? ' (' + x.source.replace(/^www\./, '') + ')' : '')).join('\n');
+  }
   // ---- register services here: { match(question) -> bool, run(question) -> Promise<string> } ----
   const SERVICES = [
+    { match: isTimerCancel, run: timerCancel },
+    { match: isTimerList, run: timerList },
+    { match: isTimerCmd, run: timerAdd },
     { match: isSetHome, run: setHome },
     { match: isWeather, run: weather },
-    { match: isTime, run: time }
+    { match: isTime, run: time },
+    { match: (q) => !!parseConvert(q), run: convert },
+    { match: isNews, run: news }
   ];
   const find = (q) => SERVICES.find((x) => x.match(q));
   async function handle(q) {
@@ -1409,6 +1586,7 @@ const svc = (() => {
     } finally { chat.busy = false; }
     return true;
   }
+  setTimeout(restoreTimers, 1500);
   return { match: (q) => !!find(q), handle };
 })();
 
@@ -1442,9 +1620,9 @@ async function tour() {
 async function ask(question) {
   if (chat.busy || !question) return;
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
+  if (svc.match(question)) { await svc.handle(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
   if (gg.isLookup(question)) { await gg.lookupAddress(question); return; }
-  if (svc.match(question)) { await svc.handle(question); return; }
   if (/\b(?:tour|show me around|walk me through|fly through)\b/i.test(question)) { await tour(); return; }
   const box = $('#answer');
   let ask_q = question;

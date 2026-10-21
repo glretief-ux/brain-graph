@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "23 */3 * * *"   # refresh the news headlines every three hours
 
 permissions:
   contents: read
@@ -27,6 +29,9 @@ jobs:
           python-version: "3.12"
       - name: Build graph.json from the vault
         run: python scripts/build_graph.py vault site/graph.json
+      - name: Fetch news headlines for Jarvis (a failing feed is skipped)
+        run: python scripts/fetch_news.py scripts/news_feeds.json site/news.json
+        continue-on-error: true
       - name: Cache-bust scripts and styles so Safari always loads the newest files
         run: sed -i "s/?v=[0-9a-zA-Z]*/?v=${GITHUB_SHA::7}/g" site/index.html
       - uses: actions/configure-pages@v5

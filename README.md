@@ -58,11 +58,13 @@ If the PC is off or VoiceStudio is closed, Jarvis switches to the free Jarvis vo
 
 Notes: a plain `http://` address other than localhost is blocked by browsers on an https page; for other devices use an https address (for example Tailscale Serve) and set an API key (`OMNIVOICE_API_KEY`) which you enter in the same box. Never expose VoiceStudio to the open internet. VoiceStudio is AGPL-3.0: this repo only calls its API and contains none of its code. Clone voices only with permission.
 
-## Services (weather, date and time)
-Jarvis answers some questions directly, with no AI key and no account, using free public services (Open-Meteo for weather and place names):
-- "What is the weather today?", "weather tomorrow", "will it rain in Ghent tomorrow?"
-- "What time is it?", "what time is it in Tokyo?", "what is the date today?"
-- Say **"my city is Brussels"** once so it knows where you are. It is stored in your browser only. Without it, the browser asks for your location the first time.
+## Services (weather, time, timers, news, conversions)
+Jarvis answers these directly, with no AI key and no account:
+- **Weather:** "What is the weather today?", "weather tomorrow", "will it rain in Ghent tomorrow?" (Open-Meteo). Say **"my city is Brussels"** once so it knows where you are (stored in your browser only).
+- **Date and time:** "What time is it?", "what time is it in Tokyo?", "what is the date today?"
+- **Timers and reminders:** "set a timer for 10 minutes", "remind me in 20 minutes to call Anna", "remind me at 3 pm to ...", "what timers do I have?", "cancel the timer". They ring (beep and voice) **only while this page is open**; they survive a reload. For anything important, add it to your calendar instead.
+- **Currency and units:** "100 euros in rand", "convert 50 usd to eur", "5 miles in km", "20 degrees celsius in fahrenheit" (ECB rates through frankfurter.dev, about 30 currencies).
+- **News:** "what is the news", "tech news", "business news", "Belgian news", "drug seizure news". Headlines come from `site/news.json`, which the GitHub Action rebuilds **every three hours** from the feeds listed in `scripts/news_feeds.json` (edit that file to change sources). To refresh now: repository -> Actions -> "Build graph and deploy to Pages" -> Run workflow.
 
 To add another service, add an entry to the `SERVICES` list in `site/app.js` (`match(question)` decides if it applies, `run(question)` returns the text Jarvis says).
 
