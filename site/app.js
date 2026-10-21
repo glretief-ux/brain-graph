@@ -546,7 +546,7 @@ async function groqChatDirect(messages, max_tokens) {
   if (IS_GEM()) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 400), temperature: 0.3 } });
+    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 2048), temperature: 0.3 } });
   }
   const call = (model) => fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
@@ -575,11 +575,12 @@ async function brainFetch(body) {
           try {
             const contents = [...hist.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content).slice(0, 800) }] })), { role: 'user', parts: [{ text: String(body.question).slice(0, 800) }] }];
             while (contents.length && contents[0].role !== 'user') contents.shift();
-            const text = await gemGenerate({ systemInstruction: { parts: [{ text: sysLive }] }, contents, tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 700, temperature: 0.2 } });
+            const text = await gemGenerate({ systemInstruction: { parts: [{ text: sysLive }] }, contents, tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 4096, temperature: 0.2 } });
             if (text) {
               const src = [...new Set(gemGenerate.sources || [])].slice(0, 3);
               return fakeRes({ answer: text + (src.length ? '\n\nSources: ' + src.join(', ') : '') });
             }
+            brainFetch.lastErr = 'Gemini returned an empty answer';
           } catch (e) { brainFetch.lastErr = e.message; }
         } else {
           for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
