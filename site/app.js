@@ -1496,7 +1496,33 @@ const svc = (() => {
     ['korean won', 'KRW'], ['won', 'KRW'], ['krw', 'KRW'], ['baht', 'THB'], ['thb', 'THB'], ['rupiah', 'IDR'], ['idr', 'IDR'], ['shekels', 'ILS'], ['shekel', 'ILS'], ['ils', 'ILS'],
     ['ringgit', 'MYR'], ['myr', 'MYR'], ['philippine pesos', 'PHP'], ['php', 'PHP'], ['lei', 'RON'], ['ron', 'RON'], ['icelandic krona', 'ISK'], ['isk', 'ISK']
   ];
-  const curOf = (w) => { const hit = CUR_ALIAS.find((x) => x[0] === w); return hit ? hit[1] : ''; };
+  const curOf = (w) => {
+    w = String(w || '').trim();
+    const hit = CUR_ALIAS.find((x) => x[0] === w) || CUR_ALIAS.find((x) => x[0] === w.replace(/(?:es|s)$/, '')) || CUR_ALIAS.find((x) => x[0] === w.replace(/s$/, ''));
+    return hit ? hit[1] : '';
+  };
+  // "one hundred and fifty" -> 150, "a thousand" -> 1000 (voice input often spells numbers out)
+  const NWV = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+  const SCALE = { hundred: 100, thousand: 1000, million: 1000000 };
+  function numberWords(text) {
+    const tk = text.replace(/-/g, ' ').split(/\s+/), out = [];
+    const isNum = (w, nx) => w in NWV || w in SCALE || (w === 'a' && nx in SCALE);
+    for (let i = 0; i < tk.length; i++) {
+      if (!isNum(tk[i], tk[i + 1])) { out.push(tk[i]); continue; }
+      let total = 0, cur = 0, j = i;
+      for (; j < tk.length; j++) {
+        const w = tk[j];
+        if (w in NWV) cur += NWV[w];
+        else if (w === 'a' && tk[j + 1] in SCALE) cur += 1;
+        else if (w === 'hundred') cur = (cur || 1) * 100;
+        else if (w === 'thousand' || w === 'million') { total += (cur || 1) * SCALE[w]; cur = 0; }
+        else if (w === 'and' && (tk[j + 1] in NWV)) continue;
+        else break;
+      }
+      out.push(String(total + cur)); i = j - 1;
+    }
+    return out.join(' ');
+  }
   const U = (type, f) => ({ type, f });
   const UNITS = {
     m: U('len', 1), meter: U('len', 1), meters: U('len', 1), metre: U('len', 1), metres: U('len', 1), km: U('len', 1000), kilometer: U('len', 1000), kilometers: U('len', 1000), kilometre: U('len', 1000), kilometres: U('len', 1000),
@@ -1514,14 +1540,21 @@ const svc = (() => {
   const num = (v) => { const a = Math.abs(v); const d = a >= 100 ? 2 : a >= 1 ? 2 : 4; return Number(v.toFixed(d)).toLocaleString('en-GB', { maximumFractionDigits: d }); };
   function parseConvert(q) {
     let t = q.toLowerCase().replace(/€\s*(\d[\d.,]*)/g, '$1 euro').replace(/\$\s*(\d[\d.,]*)/g, '$1 usd').replace(/£\s*(\d[\d.,]*)/g, '$1 gbp').replace(/(\d),(\d{3})\b/g, '$1$2').replace(/(\d),(\d)\b/g, '$1.$2');
-    t = t.replace(/\b(?:please|jarvis|hey|ok|okay|can you|could you|tell me|what is|what's|whats|how much is|how much|convert|calculate|change|what are)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    t = t.replace(/\b(?:please|jarvis|hey|ok|okay|can you|could you|would you|tell me|what is|what's|whats|how much is|how much are|how much|convert|calculate|change|what are|today|now|right now|currently|at the moment|thanks|thank you|worth|exactly|roughly|about|approximately)\b/g, ' ').replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
+    t = numberWords(t);
     let m = t.match(/^(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s+(?:to|in|into|as)\s+([a-z°][a-z°/ ]*?)\s*[?.!]*$/);
     let amount, a, b;
     if (m) { amount = parseFloat(m[1]); a = normUnit(m[2]); b = normUnit(m[3]); }
     else {
-      m = t.match(/^how many\s+([a-z°][a-z°/ ]*?)\s+(?:is|are|in)\s+(?:an?\s+)?(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/) || t.match(/^(?:how many\s+)?([a-z°][a-z°/ ]*?)\s+(?:is|are|in)\s+(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/);
-      if (!m) return null;
-      amount = parseFloat(m[2]); a = normUnit(m[3]); b = normUnit(m[1]);
+      m = t.match(/^how many\s+([a-z°][a-z°/ ]*?)\s+(?:is|are|in|make|do)\s+(?:an?\s+)?(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/) || t.match(/^(?:how many\s+)?([a-z°][a-z°/ ]*?)\s+(?:is|are|in)\s+(-?\d+(?:\.\d+)?)\s*([a-z°][a-z°/ ]*?)\s*[?.!]*$/);
+      if (m) { amount = parseFloat(m[2]); a = normUnit(m[3]); b = normUnit(m[1]); }
+      else {
+        // no amount: "euro to rand", "exchange rate of euro to rand", "euro to rand exchange rate" -> 1 unit
+        const r = t.replace(/\b(?:the|an?|current|exchange rate|rate|price|value|of|for|between|from)\b/g, ' ').replace(/[?.!]+/g, ' ').replace(/\s+/g, ' ').trim().match(/^([a-z][a-z ]*?)\s+(?:to|in|into|against|versus|vs|and)\s+([a-z][a-z ]*?)$/);
+        if (!r || !/\b(?:rate|exchange)\b/.test(q.toLowerCase()) && !/^\s*(?:the\s+)?[a-z ]+\s+(?:to|in|into)\s+[a-z ]+\s*[?.!]*$/i.test(q)) return null;
+        amount = 1; a = normUnit(r[1]); b = normUnit(r[2]);
+        if (!curOf(a) || !curOf(b)) return null;
+      }
     }
     if (!isFinite(amount) || !a || !b || a === b) return null;
     let ca = curOf(a), cb = curOf(b);
