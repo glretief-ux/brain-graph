@@ -9,6 +9,7 @@
 
 ## Decisions
 - Runs entirely in Safari so it works on iPad.
+- Optional local voice for Jarvis through [[VoiceStudio]] when working on the PC.
 - The repo is public, so notes here must not contain sensitive operational detail ([[Lessons Learned]]).
 
 ## Open items

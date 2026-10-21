@@ -44,6 +44,20 @@ summary each. No account, no key, no cost.
 The Worker only answers requests from `https://glretief-ux.github.io` (add `ALLOWED_ORIGIN` to allow others).
 Answers cite notes as buttons; tap one to jump to it. The mic and "Read answers aloud" use the browser's own speech features.
 
+## Optional: VoiceStudio voice (your own PC)
+[VoiceStudio](https://github.com/debpalash/VoiceStudio) is a free, local voice engine. Jarvis can speak, and optionally listen, through it. It runs on your PC, so it works in a desktop browser (Chrome or Edge) on that PC, not on the iPad.
+
+1. Install and open VoiceStudio on the PC (releases page, or `curl -fsSL https://voicestudio.sh/install | sh`; on Windows `irm https://voicestudio.sh/install | iex`). Install a speech model when it asks. Leave it running.
+2. Let this site talk to it. VoiceStudio only allows its own pages by default, so set this environment variable before starting it, then restart it:
+   `OMNIVOICE_ALLOWED_ORIGINS=https://glretief-ux.github.io,http://localhost:3901,http://127.0.0.1:3901,tauri://localhost,http://tauri.localhost`
+   (the variable replaces the default list, which is why the defaults are repeated; use your own UI port if it differs from 3901).
+3. Open Brain Graph, panel -> Ask the brain -> **VoiceStudio (your own PC)**. Enter `http://localhost:3900`, an optional voice name (default `alloy`), and tick "Also use VoiceStudio to hear me" if you want it to do speech-to-text. Tap **Save and test**. If the browser asks to allow local network access, allow it.
+4. Pick **VoiceStudio (your PC)** in the Voice list (it is selected for you after a successful test).
+
+If the PC is off or VoiceStudio is closed, Jarvis switches to the free Jarvis voice or the device voice for that answer. Settings are stored in the browser only.
+
+Notes: a plain `http://` address other than localhost is blocked by browsers on an https page; for other devices use an https address (for example Tailscale Serve) and set an API key (`OMNIVOICE_API_KEY`) which you enter in the same box. Never expose VoiceStudio to the open internet. VoiceStudio is AGPL-3.0: this repo only calls its API and contains none of its code. Clone voices only with permission.
+
 ## J.A.R.V.I.S. orb
 The glowing ring top-right shows what Jarvis is doing (standby, listening, thinking, speaking). **Tap it to talk**; answers are read aloud.
 

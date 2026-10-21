@@ -598,7 +598,51 @@ async function brainFetch(body) {
   if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
   return r;
 }
+/* ---------- VoiceStudio: optional local voice engine on your own PC (https://github.com/debpalash/VoiceStudio) ----------
+   Settings live in this browser only. Speaks through its OpenAI-compatible /v1/audio/speech route and can also
+   transcribe through /v1/audio/transcriptions. If the PC is off or unreachable, Jarvis falls back to the other voices. */
+const VS = (() => {
+  const get = (k) => { try { return localStorage.getItem('brain.vs' + k) || ''; } catch (e) { return ''; } };
+  const set = (k, v) => { try { if (v) localStorage.setItem('brain.vs' + k, v); else localStorage.removeItem('brain.vs' + k); } catch (e) {} };
+  const base = () => get('Url').trim().replace(/\/+$/, '');
+  const hdr = () => { const k = get('Key').trim(); return k ? { Authorization: 'Bearer ' + k } : {}; };
+  const timed = async (url, opts, ms) => {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ac.signal })); }
+    catch (e) { throw new Error(e && e.name === 'AbortError' ? 'timed out' : 'cannot connect'); }
+    finally { clearTimeout(t); }
+  };
+  const fail = async (r) => { let m = ''; try { const d = await r.json(); m = d.detail || d.error || ''; } catch (e) {} return new Error((typeof m === 'string' && m) || ('HTTP ' + r.status)); };
+  return {
+    get, set, base,
+    configured: () => !!base(),
+    listen: () => get('Listen') === '1' && !!base(),
+    async speak(text) {
+      const r = await timed(base() + '/v1/audio/speech', {
+        method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, hdr()),
+        body: JSON.stringify({ model: 'tts-1', voice: get('Voice').trim() || 'alloy', input: text, response_format: 'wav' })
+      }, 90000);
+      if (!r.ok) throw await fail(r);
+      const blob = await r.blob();
+      if (!blob.size) throw new Error('empty audio');
+      return blob;
+    },
+    async transcribe(blob) {
+      const ct = (blob.type || 'audio/webm').split(';')[0];
+      const ext = ct.includes('webm') ? 'webm' : ct.includes('ogg') ? 'ogg' : ct.includes('wav') ? 'wav' : ct.includes('mpeg') ? 'mp3' : 'm4a';
+      const fd = new FormData(); fd.append('file', new File([blob], 'clip.' + ext, { type: ct })); fd.append('model', 'whisper-1'); fd.append('response_format', 'json');
+      const r = await timed(base() + '/v1/audio/transcriptions', { method: 'POST', headers: hdr(), body: fd }, 60000);
+      if (!r.ok) throw await fail(r);
+      const d = await r.json().catch(() => ({}));
+      return String(d.text || '');
+    }
+  };
+})();
+
 async function brainSTT(blob) {
+  if (VS.listen()) {                                                   // your own PC first; cloud speech-to-text is the backup
+    try { return await VS.transcribe(blob); } catch (e) { toast('VoiceStudio could not transcribe (' + e.message + '), using the cloud'); }
+  }
   if (GKEY() && IS_GEM()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
     const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
@@ -698,7 +742,7 @@ function renderAnswer(text) {
 /* ---------- Jarvis voice ---------- */
 const voiceBox = (() => {
   const KEY = 'jarvisVoice';
-  const AI = '__ai', PRO = '__pro';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
+  const AI = '__ai', PRO = '__pro', VSV = '__vs';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
   const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
   const player = new Audio();
   player.preload = 'auto';
@@ -710,8 +754,9 @@ const voiceBox = (() => {
     if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {}
   };
   const aiOn = () => !!CHAT_URL && !aiDown && !!sel() && (sel().value === AI || sel().value === PRO);
+  const vsOn = () => VS.configured() && !!sel() && sel().value === VSV;
   const isPro = () => !!sel() && sel().value === PRO && !proDown;
-  const cap = () => (isPro() ? 300 : 600);
+  const cap = () => (vsOn() ? 900 : isPro() ? 300 : 600);
   const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
   let actx = null, node = null;
   const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
@@ -760,6 +805,20 @@ const voiceBox = (() => {
       onfail();
     }
   };
+  const speakVS = async (text, onstart, onend, onfail) => {
+    const my = ++token; busyAI = true;
+    try {
+      const blob = await VS.speak(text);
+      if (my !== token) return;
+      await playBlob(blob, my, onend);
+      if (my === token) onstart();
+    } catch (e) {
+      if (my !== token) return;
+      busyAI = false;
+      toast('VoiceStudio is not reachable (' + (e && e.message ? e.message : 'error') + '), using the device voice');
+      onfail();
+    }
+  };
   const sel = () => document.getElementById('voice');
   let voices = [];
   const rate = (v) => {                                   // higher = more Jarvis-like
@@ -775,7 +834,7 @@ const voiceBox = (() => {
   const load = () => {
     if (!('speechSynthesis' in window) || !sel()) return;
     voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang)).sort((a, b) => rate(b) - rate(a) || a.name.localeCompare(b.name));
-    if (!voices.length && !CHAT_URL) return;
+    if (!voices.length && !CHAT_URL && !VS.configured()) return;
     let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
     const opts = voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; });
     if (CHAT_URL) {
@@ -783,9 +842,13 @@ const voiceBox = (() => {
       const pr = document.createElement('option'); pr.value = PRO; pr.textContent = 'Jarvis premium voice (limited)';
       opts.unshift(f, pr);
     }
+    if (VS.configured()) {
+      const v = document.createElement('option'); v.value = VSV; v.textContent = 'VoiceStudio (your PC)';
+      opts.unshift(v);
+    }
     sel().replaceChildren(...opts);
-    const ok = (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
-    sel().value = ok ? saved : (CHAT_URL ? AI : voices[0].voiceURI);
+    const ok = saved === VSV ? VS.configured() : (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
+    sel().value = ok ? saved : (CHAT_URL ? AI : voices.length ? voices[0].voiceURI : VSV);
   };
   const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
   const init = () => {
@@ -795,6 +858,7 @@ const voiceBox = (() => {
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
+      if (vsOn()) { speakVS('At your service.', () => {}, () => {}, () => {}); return; }
       if (aiOn()) { speakAI('At your service.', () => {}, () => {}, () => {}); return; }
       const u = new SpeechSynthesisUtterance('At your service.');
       const v = current(); if (v) { u.voice = v; u.lang = v.lang; }
@@ -802,7 +866,7 @@ const voiceBox = (() => {
       speechSynthesis.speak(u);
     });
   };
-  return { init, current, aiOn, cap, speakAI, stop, unlock, busy: () => busyAI };
+  return { init, current, aiOn, vsOn, cap, speakAI, speakVS, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
 })();
 
 function say(text) {
@@ -810,6 +874,10 @@ function say(text) {
   const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
+  if (voiceBox.vsOn()) {
+    voiceBox.speakVS(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    return;
+  }
   if (voiceBox.aiOn()) {
     voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
     return;
@@ -1483,6 +1551,50 @@ const convo = (() => {
     btn.disabled = false;
   });
   clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; gemModel = ''; show(); });
+  show();
+})();
+
+/* ---------- VoiceStudio settings (stored only in this browser) ---------- */
+(() => {
+  const url = $('#vsUrl'), voice = $('#vsVoice'), key = $('#vsKey'), listen = $('#vsListen'), save = $('#vsSave'), clr = $('#vsClear'), st = $('#vsStatus');
+  if (!url) return;
+  const show = () => {
+    const on = VS.configured();
+    url.value = VS.get('Url'); voice.value = VS.get('Voice'); listen.checked = VS.get('Listen') === '1';
+    key.value = ''; key.placeholder = VS.get('Key') ? 'API key saved (type to replace)' : 'API key (only if you set one)';
+    clr.hidden = !on;
+    st.textContent = on ? 'Saved. Pick "VoiceStudio (your PC)" in the Voice list. If the PC is off, Jarvis uses another voice.' : 'Run VoiceStudio on this PC, then enter its address (usually http://localhost:3900).';
+  };
+  const hint = (msg) => {
+    const https = location.protocol === 'https:' && /^http:/i.test(url.value.trim()) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(url.value.trim());
+    if (https) return 'This page is https, so the browser blocks a plain http address that is not localhost. Use localhost, or an https address (for example Tailscale Serve).';
+    if (/cannot connect/.test(msg)) return 'Cannot connect. Is VoiceStudio open? If it is, allow this site: set OMNIVOICE_ALLOWED_ORIGINS to include https://glretief-ux.github.io (see README), and allow the browser prompt for local network access.';
+    if (/401|key/i.test(msg)) return 'VoiceStudio asked for an API key. Enter the key you set in OMNIVOICE_API_KEY.';
+    return 'VoiceStudio answered with an error: ' + msg;
+  };
+  save.addEventListener('click', async () => {
+    let u = url.value.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\/[^\s/]+/i.test(u)) { toast('Enter the full address, for example http://localhost:3900'); return; }
+    VS.set('Url', u); VS.set('Voice', voice.value.trim());
+    if (key.value.trim()) VS.set('Key', key.value.trim());
+    VS.set('Listen', listen.checked ? '1' : '');
+    voiceBox.unlock();
+    save.disabled = true; st.textContent = 'Testing…';
+    try {
+      const blob = await VS.speak('VoiceStudio connected. At your service.');
+      voiceBox.reload(); voiceBox.select('__vs'); show();
+      st.textContent = 'Connected. Jarvis now speaks with VoiceStudio.';
+      voiceBox.stop();
+      const a = new Audio(URL.createObjectURL(blob)); a.play().catch(() => {});
+    } catch (e) { voiceBox.reload(); st.textContent = hint(e.message || String(e)); }
+    save.disabled = false;
+  });
+  clr.addEventListener('click', () => {
+    ['Url', 'Voice', 'Key', 'Listen'].forEach((k) => VS.set(k, ''));
+    try { if (localStorage.getItem('jarvisVoice') === '__vs') localStorage.removeItem('jarvisVoice'); } catch (e) {}
+    voiceBox.reload(); show();
+  });
+  listen.addEventListener('change', () => { if (VS.configured()) VS.set('Listen', listen.checked ? '1' : ''); });
   show();
 })();
 
