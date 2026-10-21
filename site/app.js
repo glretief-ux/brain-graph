@@ -1320,6 +1320,98 @@ const gg = (() => {
   return { init, notesFor, live, compose, isComposeRequest, isEventRequest, addEventDraft, isLookup, lookupAddress };
 })();
 
+/* ---------- Services: quick answers that need no AI and no key (weather, date and time). Add more to SERVICES below. ---------- */
+const svc = (() => {
+  const store = (k, v) => { try { if (v === undefined) return localStorage.getItem('brain.' + k) || ''; if (v) localStorage.setItem('brain.' + k, v); else localStorage.removeItem('brain.' + k); } catch (e) {} return ''; };
+  const getJSON = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error('service error ' + r.status); return r.json(); };
+  const cityRe = "([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. -]{1,40}?)";
+  // ---- places ----
+  async function geocode(name) {
+    const d = await getJSON('https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name=' + encodeURIComponent(name));
+    const g = (d.results || [])[0];
+    if (!g) return null;
+    return { name: g.name + (g.country ? ', ' + g.country : ''), lat: g.latitude, lon: g.longitude, tz: g.timezone };
+  }
+  const home = () => { try { return JSON.parse(store('home') || 'null'); } catch (e) { return null; } };
+  function here() {                                                // browser location (asks permission once)
+    return new Promise((res) => {
+      if (!navigator.geolocation) { res(null); return; }
+      navigator.geolocation.getCurrentPosition((p) => res({ name: 'your location', lat: p.coords.latitude, lon: p.coords.longitude }), () => res(null), { timeout: 8000, maximumAge: 3600000 });
+    });
+  }
+  // ---- weather ----
+  const WMO = { 0: 'clear sky', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'foggy', 48: 'foggy', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 56: 'freezing drizzle', 57: 'freezing drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 66: 'freezing rain', 67: 'freezing rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 77: 'snow grains', 80: 'light showers', 81: 'showers', 82: 'heavy showers', 85: 'snow showers', 86: 'heavy snow showers', 95: 'thunderstorms', 96: 'thunderstorms with hail', 99: 'thunderstorms with hail' };
+  const wmo = (c) => WMO[c] || 'mixed weather';
+  const isWeather = (q) => /\b(?:weather|forecast|temperature|umbrella|raining|snowing|will it (?:rain|snow)|is it (?:raining|snowing|cold|hot|warm|sunny)|how (?:hot|cold|warm) is it)\b/i.test(q) && !/\b(?:write|draft|compose|email|e-mail|mail)\b/i.test(q);
+  const isSetHome = (q) => /\b(?:my (?:home )?(?:city|town|location) is|i live in|set my (?:home )?(?:city|town|location) to|change my (?:home )?(?:city|town|location) to)\s+\S/i.test(q);
+  async function setHome(q) {
+    const m = q.match(new RegExp("(?:my (?:home )?(?:city|town|location) is|i live in|set my (?:home )?(?:city|town|location) to|change my (?:home )?(?:city|town|location) to)\\s+" + cityRe + "\\s*[.!?]*$", 'i'));
+    const g = m ? await geocode(m[1].trim()) : null;
+    if (!g) return 'I could not find that place. Try the city name, for example: my city is Brussels.';
+    store('home', JSON.stringify(g));
+    return 'Done. Your home location is ' + g.name + '. I will use it for the weather and the time.';
+  }
+  async function weather(q) {
+    const when = /\bday after tomorrow\b/i.test(q) ? 2 : /\btomorrow\b/i.test(q) ? 1 : 0;
+    const pm = q.match(new RegExp("\\b(?:in|for|at|near)\\s+(?!the\\b|my\\b|today\\b|tomorrow\\b|this\\b|next\\b|a\\b)" + cityRe + "(?=\\s+(?:today|tomorrow|tonight|this|next|on|right|now|please)\\b|[?.!,]|$)", 'i'));
+    let place = null;
+    if (pm) { place = await geocode(pm[1].trim()); if (!place) return 'I could not find a place called ' + pm[1].trim() + '.'; }
+    else place = home() || await here();
+    if (!place) return 'I do not know where you are yet. Tell me your city, for example: my city is Brussels. Or ask: weather in Brussels.';
+    const d = await getJSON('https://api.open-meteo.com/v1/forecast?latitude=' + place.lat + '&longitude=' + place.lon + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max&timezone=auto&forecast_days=3&wind_speed_unit=kmh');
+    const dd = d.daily, i = Math.min(when, dd.time.length - 1);
+    const hi = Math.round(dd.temperature_2m_max[i]), lo = Math.round(dd.temperature_2m_min[i]), rain = dd.precipitation_probability_max[i], wind = Math.round(dd.wind_speed_10m_max[i]);
+    const label = place.name === 'your location' ? '' : ' in ' + place.name;
+    const day = ['today', 'tomorrow', 'the day after tomorrow'][i];
+    let out = '';
+    if (i === 0) {
+      const c = d.current;
+      out = 'Right now' + label + ' it is ' + Math.round(c.temperature_2m) + ' degrees with ' + wmo(c.weather_code) + (Math.abs(c.apparent_temperature - c.temperature_2m) >= 3 ? ', feels like ' + Math.round(c.apparent_temperature) : '') + '. Today: high ' + hi + ', low ' + lo + (rain != null ? ', ' + rain + ' percent chance of rain' : '') + ', wind up to ' + wind + ' kilometres per hour.';
+    } else {
+      out = 'Weather' + label + ' ' + day + ': ' + wmo(dd.weather_code[i]) + ', high ' + hi + ', low ' + lo + (rain != null ? ', ' + rain + ' percent chance of rain' : '') + ', wind up to ' + wind + ' kilometres per hour.';
+    }
+    if (rain != null && rain >= 50) out += ' Take an umbrella.';
+    return out;
+  }
+  // ---- date and time ----
+  const isTime = (q) => /\b(?:what(?:'s| is) (?:the )?(?:time|date|day)|what time is it|what day is it|today'?s date|what is today|current time|time now)\b/i.test(q);
+  async function time(q) {
+    const pm = q.match(new RegExp("\\b(?:in|at)\\s+(?!the\\b|my\\b)" + cityRe + "(?=[?.!,]|$)", 'i'));
+    let tz = undefined, label = '';
+    if (pm) {
+      const g = await geocode(pm[1].trim());
+      if (!g) return 'I could not find a place called ' + pm[1].trim() + '.';
+      tz = g.tz; label = ' in ' + g.name;
+    }
+    const now = new Date();
+    const t = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(now);
+    const dt = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: tz }).format(now);
+    return /\b(?:date|day)\b/i.test(q) && !/\btime\b/i.test(q) ? 'It is ' + dt + label + '.' : 'It is ' + t + ' on ' + dt + label + '.';
+  }
+  // ---- register services here: { match(question) -> bool, run(question) -> Promise<string> } ----
+  const SERVICES = [
+    { match: isSetHome, run: setHome },
+    { match: isWeather, run: weather },
+    { match: isTime, run: time }
+  ];
+  const find = (q) => SERVICES.find((x) => x.match(q));
+  async function handle(q) {
+    const svcFound = find(q);
+    if (!svcFound) return false;
+    chat.busy = true; orb.set('thinking');
+    $('#answer').replaceChildren(el('span', 'muted', 'One moment…'));
+    try {
+      const text = await svcFound.run(q);
+      renderAnswer(text); orb.set('idle'); say(text);
+    } catch (e) {
+      const msg = 'Sorry, that service is not reachable right now (' + (e && e.message ? e.message : 'error') + ').';
+      $('#answer').replaceChildren(el('span', 'err', msg)); orb.set('idle');
+    } finally { chat.busy = false; }
+    return true;
+  }
+  return { match: (q) => !!find(q), handle };
+})();
+
 const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|today'?s|weather|price of|who is|who was|what is the (?:capital|population)|how much (?:is|does)|score|stock|exchange rate)\b/i;
 
 // Fly through the most connected notes and read each one out
@@ -1352,6 +1444,7 @@ async function ask(question) {
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
   if (gg.isLookup(question)) { await gg.lookupAddress(question); return; }
+  if (svc.match(question)) { await svc.handle(question); return; }
   if (/\b(?:tour|show me around|walk me through|fly through)\b/i.test(question)) { await tour(); return; }
   const box = $('#answer');
   let ask_q = question;

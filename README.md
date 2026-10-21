@@ -58,6 +58,14 @@ If the PC is off or VoiceStudio is closed, Jarvis switches to the free Jarvis vo
 
 Notes: a plain `http://` address other than localhost is blocked by browsers on an https page; for other devices use an https address (for example Tailscale Serve) and set an API key (`OMNIVOICE_API_KEY`) which you enter in the same box. Never expose VoiceStudio to the open internet. VoiceStudio is AGPL-3.0: this repo only calls its API and contains none of its code. Clone voices only with permission.
 
+## Services (weather, date and time)
+Jarvis answers some questions directly, with no AI key and no account, using free public services (Open-Meteo for weather and place names):
+- "What is the weather today?", "weather tomorrow", "will it rain in Ghent tomorrow?"
+- "What time is it?", "what time is it in Tokyo?", "what is the date today?"
+- Say **"my city is Brussels"** once so it knows where you are. It is stored in your browser only. Without it, the browser asks for your location the first time.
+
+To add another service, add an entry to the `SERVICES` list in `site/app.js` (`match(question)` decides if it applies, `run(question)` returns the text Jarvis says).
+
 ## J.A.R.V.I.S. orb
 The glowing ring top-right shows what Jarvis is doing (standby, listening, thinking, speaking). **Tap it to talk**; answers are read aloud.
 
