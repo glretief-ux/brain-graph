@@ -519,13 +519,23 @@ async function gemPick() {
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(GKEY()));
   const d = await r.json().catch(() => ({}));
   const ids = ((d && d.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name).replace('models/', ''));
-  return ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'].find((m) => ids.includes(m)) || ids.find((m) => /flash/.test(m) && !/lite|image|tts|live|thinking/.test(m)) || ids[0] || '';
+  const ver = (id) => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
+  const flash = ids.filter((id) => /^gemini-[\d.]+-flash(-\d+)?$/.test(id)).sort((x, y) => ver(y) - ver(x));
+  const rest = ids.filter((id) => /flash/.test(id) && !/lite|image|tts|live|thinking|robotics|audio/.test(id) && !flash.includes(id));
+  return [...flash, 'gemini-flash-latest', ...rest].filter((v, i, a) => a.indexOf(v) === i);
 }
+const GEM_GONE = /model|not found|not supported|no longer available|deprecated/i;
 async function gemGenerate(payload) {
   let { r, d } = await gemCall(gemModel || 'gemini-flash-latest', payload);
-  if (!r.ok && /model|not found|not supported/i.test((d.error && d.error.message) || '')) {
-    const alt = await gemPick();
-    if (alt) { gemModel = alt; ({ r, d } = await gemCall(alt, payload)); }
+  if (!r.ok && GEM_GONE.test((d.error && d.error.message) || '')) {
+    const tried = [gemModel || 'gemini-flash-latest'];
+    for (const alt of (await gemPick()).slice(0, 8)) {
+      if (tried.includes(alt)) continue;
+      tried.push(alt);
+      ({ r, d } = await gemCall(alt, payload));
+      if (r.ok) { gemModel = alt; break; }
+      if (!GEM_GONE.test((d.error && d.error.message) || '')) break;
+    }
   }
   if (!r.ok) throw new Error('Gemini: ' + ((d.error && d.error.message) || 'error ' + r.status));
   const cand = (d.candidates || [])[0];
