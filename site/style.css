@@ -116,11 +116,11 @@ label.inline { justify-content: flex-start; margin: 8px 0 0; font-size: 12px; }
 
 /* ---------- J.A.R.V.I.S. orb ---------- */
 #orb {
-  position: fixed; z-index: 5; width: 110px; padding: 0; border: 0; background: none; cursor: pointer;
-  top: calc(66px + env(safe-area-inset-top)); right: calc(8px + env(safe-area-inset-right));
+  position: fixed; z-index: 5; width: clamp(140px, 15vw, 200px); padding: 0; border: 0; background: none; cursor: pointer;
+  top: 50%; transform: translateY(-50%); right: calc(12px + env(safe-area-inset-right));
   display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--accent);
 }
-#orbc { position: static; inset: auto; width: 110px; height: 110px; display: block; cursor: pointer; touch-action: manipulation; filter: drop-shadow(0 0 10px rgba(74, 222, 128, .35)); }
+#orbc { position: static; inset: auto; width: 100%; height: auto; aspect-ratio: 1; image-rendering: auto; display: block; cursor: pointer; touch-action: manipulation; filter: drop-shadow(0 0 10px rgba(74, 222, 128, .35)); }
 #orbState {
   font: 600 9px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .22em; color: var(--muted);
   background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px;
