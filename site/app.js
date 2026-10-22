@@ -962,7 +962,7 @@ const gg = (() => {
 
   async function api(url) {
     const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-    if (r.status === 401) { token = ''; throw new Error('Google sign-in expired. Tap Connect Google again.'); }
+    if (r.status === 401) { token = ''; try { localStorage.removeItem('brain.gtok'); } catch (e) {} throw new Error('Google sign-in expired. Tap Connect Google again.'); }
     if (!r.ok) throw new Error('Google error ' + r.status + (r.status === 403 ? ' (is the API enabled for your project?)' : ''));
     return r.json();
   }
@@ -1012,7 +1012,7 @@ const gg = (() => {
 
   async function apiPost(url, body) {
     const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (r.status === 401) { token = ''; throw new Error('Google sign-in expired. Tap Connect Google again.'); }
+    if (r.status === 401) { token = ''; try { localStorage.removeItem('brain.gtok'); } catch (e) {} throw new Error('Google sign-in expired. Tap Connect Google again.'); }
     if (r.status === 403) throw new Error('Google refused. Tap Sign out, then Connect Google and allow "send email".');
     if (!r.ok) throw new Error('Google error ' + r.status);
     return r.json();
@@ -1318,6 +1318,7 @@ const gg = (() => {
         token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000;
         canWrite = String(r.scope || '').includes('gmail.compose');
         canCal = String(r.scope || '').includes('calendar.events');
+        try { localStorage.setItem('brain.gtok', JSON.stringify({ token, exp: exp - 60000, canWrite, canCal })); localStorage.setItem('brain.gconn', '1'); } catch (e) {}
         refresh();
       },
       error_callback: (e) => toast('Google sign-in ' + ((e && e.type) || 'failed').replace(/_/g, ' '))
@@ -1327,12 +1328,22 @@ const gg = (() => {
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
     token = ''; exp = 0; canWrite = false; canCal = false; contacts = []; book = []; bookAt = 0; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
+    try { localStorage.removeItem('brain.gtok'); localStorage.removeItem('brain.gconn'); } catch (e) {}
     hideCompose();
     render();
   }
   function init() {
+    try {                                                              // reopen without signing in again while the hour-long token is still valid
+      const sv = JSON.parse(localStorage.getItem('brain.gtok') || 'null');
+      if (sv && sv.token && sv.exp > Date.now()) { token = sv.token; exp = sv.exp + 60000; canWrite = !!sv.canWrite; canCal = !!sv.canCal; setTimeout(refresh, 300); }
+    } catch (e) {}
     render();
     if (!CID) return;
+    document.addEventListener('pointerdown', function quiet() {         // token expired but you connected before: renew quietly on your first tap
+      let was = false; try { was = localStorage.getItem('brain.gconn') === '1'; } catch (e) {}
+      if (!was || live()) { document.removeEventListener('pointerdown', quiet); return; }
+      if (window.google && google.accounts) { document.removeEventListener('pointerdown', quiet); connect(); }
+    });
     const s = document.createElement('script');
     s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
     document.head.append(s);
@@ -2007,6 +2018,8 @@ const wake = (() => {
     return t.replace(/[,.!?]+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').slice(m.index + m[0].length).trim();
   }
   let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
+  let srBroken = load('brain.srBroken') === '1', quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
+  const wCapable = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const say3 = (m) => { status = m; const e = document.getElementById('wakeStatus'); if (e) e.textContent = m; };
   const busy = () => convo.isOn() || orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) || Date.now() - lastWake < 4000 || document.hidden;
 
@@ -2014,7 +2027,7 @@ const wake = (() => {
     const rest = split(text, phrase);
     if (rest == null) return;
     lastWake = Date.now(); fails = 0;
-    stopRec();
+    stopRec(); stopW();
     voiceBox.unlock();
     $('#speak').checked = true;
     if (rest.length > 2) { toast('Heard: ' + rest); $('#askInput').value = ''; ask(rest); return; }   // "hey jarvis what is the weather"
@@ -2030,27 +2043,85 @@ const wake = (() => {
     r.onresult = (ev) => { for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) onHeard(ev.results[i][0].transcript); };
     r.onerror = (ev) => {
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); }
-      else if (ev.error === 'network') { fails++; say3('Wake phrase needs an internet connection.'); }
+      else if (ev.error === 'network' || ev.error === 'language-not-supported') { if (wCapable()) { srBroken = true; store('brain.srBroken', '1'); stopRec(); say3('This browser cannot hear the wake phrase itself, so Jarvis listens through your AI key instead.'); } else { fails++; say3('Wake phrase needs a free AI key (see Free AI key below) or a browser with speech recognition.'); } }
       else if (ev.error !== 'no-speech' && ev.error !== 'aborted') fails++;
     };
-    r.onend = () => { running = false; if (rec === r) rec = null; };
+    const t0 = Date.now();
+    r.onend = () => { running = false; if (rec === r) rec = null; if (!srBroken && Date.now() - t0 < 900 && ++quick > 4 && wCapable()) { srBroken = true; store('brain.srBroken', '1'); } };
     rec = r;
     try { r.start(); } catch (e) { rec = null; }
   }
+
+  // Listens through the microphone, cuts out each spoken phrase and has the AI key write it down; no browser speech recognition needed
+  async function startW() {
+    if (wst || !enabled || !wCapable()) return;
+    const st = wst = { stop: false, stream: null, ctx: null };
+    try {
+      const id = load('brain.mic') || '';
+      const opts = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      try { st.stream = await navigator.mediaDevices.getUserMedia({ audio: Object.assign(opts, id ? { deviceId: { exact: id } } : {}) }); }
+      catch (e) { st.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    } catch (e) { wst = null; enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); return; }
+    if (st.stop) { st.stream.getTracks().forEach((t) => t.stop()); return; }
+    st.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try { await st.ctx.resume(); } catch (e) {}
+    say3(st.ctx.state === 'running' ? 'Listening for "' + phrase + '".' : 'Click anywhere on the page once so the browser starts the microphone.');
+    const resume = () => { try { st.ctx.resume(); } catch (e) {} if (!st.stop) say3('Listening for "' + phrase + '".'); };
+    document.addEventListener('pointerdown', resume, { once: true });
+    const an = st.ctx.createAnalyser(); an.fftSize = 1024;
+    st.ctx.createMediaStreamSource(st.stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const level = () => { an.getFloatTimeDomainData(buf); let t = 0; for (const v of buf) t += v * v; return Math.sqrt(t / buf.length); };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    let floor = 0.006;
+    while (!st.stop) {
+      await sleep(60);
+      const lv = level(), thr = Math.max(floor * 3.2, floor + 0.012, 0.015);
+      if (lv <= thr) { floor = floor * 0.97 + Math.min(lv, 0.03) * 0.03; continue; }
+      // someone is speaking: record until a pause
+      const rec = new MediaRecorder(st.stream), chunks = [];
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      const done = new Promise((r) => { rec.onstop = r; });
+      rec.start();
+      const t0 = performance.now(); let last = t0;
+      while (!st.stop) {
+        await sleep(60);
+        const now = performance.now();
+        if (level() > thr) last = now;
+        if (now - last > 900 || now - t0 > 8000) break;
+      }
+      rec.stop(); await done;
+      const dur = performance.now() - t0;
+      if (st.stop || dur < 450) continue;
+      const nowMs = Date.now(); wsent = wsent.filter((t) => nowMs - t < 60000);
+      if (wsent.length >= 8) continue;                                    // keeps free AI limits safe if the room is noisy
+      wsent.push(nowMs);
+      try {
+        const text = await brainSTT(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+        if (!st.stop && text) onHeard(text);
+      } catch (e) { say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
+    }
+    try { st.ctx.close(); } catch (e) {}
+    try { st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    document.removeEventListener('pointerdown', resume);
+    if (wst === st) wst = null;
+  }
+  function stopW() { if (wst) wst.stop = true; }
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
   function tick() {
-    if (!enabled) { stopRec(); return; }
-    if (busy()) { if (rec) stopRec(); return; }
+    if (!enabled) { stopRec(); stopW(); return; }
+    if (busy()) { if (rec) stopRec(); stopW(); return; }
+    if ((!SRW || srBroken) && wCapable()) { if (!wst) startW(); return; }
     if (fails > 6) { enabled = false; store(KEY_ON, '0'); sync(); say3('Wake phrase stopped: the browser kept refusing speech recognition. Tap the orb instead.'); return; }
     if (!rec) startRec();
   }
   let box, ph;
-  function sync() { if (box) box.checked = enabled; if (!enabled) { stopRec(); if (!/blocked|stopped/.test(status)) say3(''); } }
+  function sync() { if (box) box.checked = enabled; if (!enabled) { stopRec(); stopW(); if (!/blocked|stopped/.test(status)) say3(''); } }
   function init() {
     box = document.getElementById('wakeOn'); ph = document.getElementById('wakePhrase');
     const wrap = document.getElementById('wakeBox');
     if (!box) return;
-    if (!SRW) { if (wrap) wrap.hidden = true; return; }
+    if (!SRW && !wCapable()) { if (wrap) wrap.hidden = true; return; }
     ph.value = phrase; box.checked = enabled;
     box.addEventListener('change', () => {
       enabled = box.checked; store(KEY_ON, enabled ? '1' : '0'); fails = 0;
@@ -2059,7 +2130,7 @@ const wake = (() => {
     });
     const savePh = () => {
       const v = norm(ph.value) || DEFAULT; phrase = v; ph.value = v; store(KEY_PH, v);
-      stopRec(); if (enabled) say3('Listening for "' + v + '".');
+      stopRec(); stopW(); if (enabled) say3('Listening for "' + v + '".');
     };
     ph.addEventListener('change', savePh);
     timer = setInterval(tick, 1000);
