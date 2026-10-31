@@ -845,7 +845,7 @@ const voiceBox = (() => {
   const koOn = () => !koDown && !!sel() && sel().value === KOV;
   const xiOn = () => !!xiKey() && !xiDown && !!sel() && sel().value === XIV;
   const isPro = () => !!sel() && sel().value === PRO && !proDown;
-  const cap = () => (koOn() ? 700 : xiOn() ? 380 : vsOn() ? 900 : isPro() ? 300 : 600);
+  const cap = () => (koOn() ? 320 : xiOn() ? 380 : vsOn() ? 900 : isPro() ? 300 : 600);
   const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
   let actx = null, node = null;
   const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
@@ -898,7 +898,10 @@ const voiceBox = (() => {
     toast('Loading the Jarvis voice onto this device (about 90 MB, only the first time)…');
     const m = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
     let last = 0;
-    const t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'wasm', progress_callback: (p) => { if (p && p.status === 'progress' && Date.now() - last > 1500) { last = Date.now(); vlog('voice download ' + Math.round(p.progress || 0) + '%'); } } });
+    const cb = { progress_callback: (p) => { if (p && p.status === 'progress' && Date.now() - last > 1500) { last = Date.now(); vlog('voice download ' + Math.round(p.progress || 0) + '%'); } } };
+    let t = null;
+    if (navigator.gpu) { try { t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'fp32', device: 'webgpu', ...cb }); vlog('voice: using the graphics chip'); } catch (e) { vlog('voice: graphics chip not usable (' + (e && e.message) + '), using the processor'); } }
+    if (!t) { t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'wasm', ...cb }); vlog('voice: using the processor (slower)'); }
     toast('Jarvis voice is ready.');
     return t;
   })().catch((e) => { koP = null; throw e; }));
@@ -910,7 +913,8 @@ const voiceBox = (() => {
       const parts = (String(text).match(/[^.!?]+[.!?]*\s*/g) || [String(text)]).map((x) => x.trim()).filter(Boolean);
       let next = tts.generate(parts[0], { voice: koVoice() });
       for (let i = 0; i < parts.length; i++) {
-        const audio = await next;
+        const t0 = Date.now(); const audio = await next;
+        vlog('voice: sentence ' + (i + 1) + '/' + parts.length + ' made in ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
         if (my !== token) return;
         next = i + 1 < parts.length ? tts.generate(parts[i + 1], { voice: koVoice() }) : null;
         const blob = audio.toBlob(), lastPart = i === parts.length - 1;
@@ -2016,8 +2020,10 @@ async function ask(question) {
         web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
       } catch (e) { /* answer without it */ }
     }
+    const tA = Date.now();
     const r = await Promise.race([brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 45000))]);
     const data = await r.json().catch(() => ({}));
+    vlog('answer: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
     chat.history = chat.history.slice(-6);
