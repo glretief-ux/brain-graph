@@ -135,5 +135,15 @@
 <div id="toast"></div>
 <script src="config.js?v=45"></script>
 <script src="app.js?v=45"></script>
+<script>
+/* self-update: if Safari served an old copy of this page, reload once with a fresh address */
+(function () { try {
+  var el = document.querySelector('script[src^="app.js"]'), cur = (el.getAttribute('src').match(/[?]v=([0-9a-zA-Z]+)/) || [])[1];
+  fetch('index.html?cb=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (t) {
+    var m = t.match(new RegExp('app\\.js[?]v=([0-9a-zA-Z]+)'));
+    if (m && cur && m[1] !== cur) { var u = new URL(location.href); if (u.searchParams.get('r') !== m[1]) { u.searchParams.set('r', m[1]); location.replace(u.toString()); } }
+  }).catch(function () {});
+} catch (e) {} })();
+</script>
 </body>
 </html>
