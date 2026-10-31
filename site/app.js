@@ -953,9 +953,9 @@ function speakLocal(clean) {
 /* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
 const gg = (() => {
   const CID = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.googleClientId) || '';
-  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly';
-  let token = '', exp = 0, tc = null, at = 0, canWrite = false, canCal = false, contacts = [], contactsAt = 0;
-  const data = { cal: '', mail: '', events: [], unread: null, from: [] };
+  const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly';
+  let token = '', exp = 0, tc = null, at = 0, canWrite = false, canCal = false, canYT = false, contacts = [], contactsAt = 0;
+  const data = { cal: '', mail: '', events: [], unread: null, from: [], yt: null, ytErr: '' };
   const live = () => !!token && Date.now() < exp - 30000;
   const when = (d, opt) => d.toLocaleString('en-GB', opt);
   const short = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
@@ -1282,6 +1282,75 @@ const gg = (() => {
     b.disabled = false;
   }
 
+
+  // ---------- YouTube: your channel numbers (read only) ----------
+  const n0 = (v) => Number(v || 0).toLocaleString('en-GB');
+  const dur = (sec) => { sec = Math.round(Number(sec) || 0); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60; return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0') : m + ':' + String(x).padStart(2, '0'); };
+  const isoDur = (iso) => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '') || []; return dur((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0)); };
+  const day = (d) => d.toISOString().slice(0, 10);
+  const pct = (a, b) => (b ? (a >= b ? '+' : '') + Math.round((a - b) / b * 100) + '%' : 'n/a');
+  async function ytApi(url) {
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+    if (r.status === 401) { token = ''; try { localStorage.removeItem('brain.gtok'); } catch (e) {} throw new Error('Google sign-in expired. Tap Connect Google again.'); }
+    if (!r.ok) {
+      let m = ''; try { m = ((await r.json()).error || {}).message || ''; } catch (e) {}
+      if (r.status === 403 && /not been used|disabled|enable/i.test(m)) throw new Error('API_OFF ' + m);
+      throw new Error('YouTube error ' + r.status + (m ? ': ' + short(m, 120) : ''));
+    }
+    return r.json();
+  }
+  async function loadYouTube() {
+    data.yt = null; data.ytErr = '';
+    if (!canYT) return;
+    try {
+      const B = 'https://www.googleapis.com/youtube/v3/';
+      const ch = (await ytApi(B + 'channels?part=snippet,statistics,contentDetails&mine=true')).items || [];
+      if (!ch.length) { data.ytErr = 'No YouTube channel was found for the Google account you signed in with. Sign out, Connect Google, and pick the account or brand account that owns the channel.'; return; }
+      const c = ch[0], st = c.statistics || {};
+      const y = { name: c.snippet.title, subs: st.hiddenSubscriberCount ? null : +st.subscriberCount, views: +st.viewCount, videos: +st.videoCount, since: (c.snippet.publishedAt || '').slice(0, 10), vids: [], an: null, prev: null, top: [], traffic: [], anErr: '' };
+      const up = c.contentDetails && c.contentDetails.relatedPlaylists && c.contentDetails.relatedPlaylists.uploads;
+      if (up) {
+        const ids = ((await ytApi(B + 'playlistItems?part=contentDetails&maxResults=50&playlistId=' + up)).items || []).map((i) => i.contentDetails.videoId);
+        if (ids.length) y.vids = ((await ytApi(B + 'videos?part=snippet,statistics,contentDetails&id=' + ids.join(','))).items || []).map((v) => ({ id: v.id, title: v.snippet.title, date: (v.snippet.publishedAt || '').slice(0, 10), views: +(v.statistics || {}).viewCount || 0, likes: +(v.statistics || {}).likeCount || 0, comments: +(v.statistics || {}).commentCount || 0, len: isoDur(v.contentDetails && v.contentDetails.duration) }));
+      }
+      try {
+        const A = 'https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE';
+        const end = new Date(Date.now() - 864e5), st1 = new Date(end - 27 * 864e5), end0 = new Date(st1 - 864e5), st0 = new Date(end0 - 27 * 864e5);
+        const M = '&metrics=views,estimatedMinutesWatched,averageViewDuration,subscribersGained,subscribersLost,likes,comments,shares';
+        const row = (j) => { const h = (j.columnHeaders || []).map((x) => x.name), r0 = (j.rows || [[]])[0] || []; const o = {}; h.forEach((k, i) => { o[k] = +r0[i] || 0; }); return o; };
+        const [cur, prev, top, tr] = await Promise.all([
+          ytApi(A + '&startDate=' + day(st1) + '&endDate=' + day(end) + M),
+          ytApi(A + '&startDate=' + day(st0) + '&endDate=' + day(end0) + M),
+          ytApi(A + '&startDate=' + day(st1) + '&endDate=' + day(end) + '&dimensions=video&metrics=views,averageViewDuration,subscribersGained&sort=-views&maxResults=8'),
+          ytApi(A + '&startDate=' + day(st1) + '&endDate=' + day(end) + '&dimensions=insightTrafficSourceType&metrics=views&sort=-views&maxResults=6')
+        ]);
+        y.an = row(cur); y.prev = row(prev); y.range = day(st1) + ' to ' + day(end);
+        const names = Object.fromEntries(y.vids.map((v) => [v.id, v.title]));
+        const miss = (top.rows || []).map((r0) => r0[0]).filter((id) => !names[id]);
+        if (miss.length) ((await ytApi('https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + miss.join(','))).items || []).forEach((v) => { names[v.id] = v.snippet.title; });
+        y.top = (top.rows || []).map((r0) => ({ title: names[r0[0]] || r0[0], views: r0[1], avg: r0[2], subs: r0[3] }));
+        y.traffic = (tr.rows || []).map((r0) => ({ src: String(r0[0]).replace(/^YT_/, '').replace(/_/g, ' ').toLowerCase(), views: r0[1] }));
+      } catch (e) { y.anErr = /^API_OFF/.test(e.message) ? 'The YouTube Analytics API is not switched on in your Google Cloud project, so only public numbers are available.' : e.message; }
+      data.yt = y;
+    } catch (e) {
+      data.ytErr = /^API_OFF/.test(e.message) ? 'The YouTube Data API v3 is not switched on in your Google Cloud project. Open console.cloud.google.com, APIs and Services, Library, search "YouTube Data API v3" and "YouTube Analytics API", and click Enable on both.' : e.message;
+    }
+  }
+  function ytNotes() {
+    if (!canYT) return [{ title: 'YouTube access', type: 'google', text: 'Jarvis does not have YouTube permission yet. Tell the user: tap Sign out, then Connect Google again and tick the YouTube permissions.' }];
+    const y = data.yt;
+    if (!y) return [{ title: 'YouTube', type: 'google', text: data.ytErr || 'YouTube data is not loaded yet. Tap Refresh and ask again.' }];
+    const out = [{ title: 'YouTube channel', type: 'google', text: 'Channel "' + y.name + '": ' + (y.subs == null ? 'subscriber count hidden' : n0(y.subs) + ' subscribers') + ', ' + n0(y.views) + ' total views, ' + n0(y.videos) + ' videos, created ' + y.since + '.' }];
+    if (y.an) {
+      const a = y.an, p = y.prev;
+      out.push({ title: 'YouTube last 28 days', type: 'google', text: 'Period ' + y.range + ' (compared with the 28 days before): views ' + n0(a.views) + ' (' + pct(a.views, p.views) + '), watch time ' + n0(Math.round(a.estimatedMinutesWatched / 60)) + ' hours (' + pct(a.estimatedMinutesWatched, p.estimatedMinutesWatched) + '), average view duration ' + dur(a.averageViewDuration) + ' (before ' + dur(p.averageViewDuration) + '), subscribers +' + n0(a.subscribersGained) + ' / -' + n0(a.subscribersLost) + ' (net ' + n0(a.subscribersGained - a.subscribersLost) + ', before ' + n0(p.subscribersGained - p.subscribersLost) + '), likes ' + n0(a.likes) + ', comments ' + n0(a.comments) + ', shares ' + n0(a.shares) + '. Traffic sources by views: ' + (y.traffic.map((t) => t.src + ' ' + n0(t.views)).join(', ') || 'none') + '.' });
+      if (y.top.length) out.push({ title: 'YouTube top videos (28 days)', type: 'google', text: y.top.map((t, i) => (i + 1) + '. ' + short(t.title, 70) + ': ' + n0(t.views) + ' views, avg ' + dur(t.avg) + ', +' + n0(t.subs) + ' subs').join('\n') });
+    } else if (y.anErr) out.push({ title: 'YouTube analytics', type: 'google', text: y.anErr });
+    if (y.vids.length) out.push({ title: 'YouTube recent uploads', type: 'google', text: y.vids.slice(0, 8).map((v) => short(v.title, 60) + ' (' + v.date + ', ' + v.len + '): ' + n0(v.views) + ' views, ' + n0(v.likes) + ' likes, ' + n0(v.comments) + ' comments').join('\n') });
+    return out;
+  }
+  const isYoutube = (q) => /\b(?:youtube|you tube|my channel|channel stats|subscribers?|subs|my videos?|watch time|analytics|uploads?|shorts|click.?through|retention|audience|thumbnails?|my views|video views|top videos?|best videos?|worst videos?)\b/i.test(q);
+
   function render(msg) {
     const st = $('#gStatus'), ag = $('#gAgenda');
     const on = live();
@@ -1298,12 +1367,15 @@ const gg = (() => {
     }
     if (!upcoming.length && data.cal) ag.append(el('div', 'ev', 'No upcoming events this week.'));
     if (data.unread != null) ag.append(el('div', 'mail', data.unread + ' unread in your inbox'));
+    if (data.yt) ag.append(el('div', 'mail', 'YouTube ' + data.yt.name + ': ' + (data.yt.subs == null ? '' : n0(data.yt.subs) + ' subscribers, ') + (data.yt.an ? n0(data.yt.an.views) + ' views in 28 days' : n0(data.yt.views) + ' views in total')));
+    else if (!canYT) ag.append(el('div', 'mail', 'YouTube: tap Sign out, then Connect Google again to allow YouTube.'));
+    else if (data.ytErr) ag.append(el('div', 'mail', 'YouTube: ' + data.ytErr));
   }
 
   async function refresh() {
     if (!live()) { render(); return; }
     $('#gStatus').textContent = 'Reading your calendar and inbox…';
-    const [c, m] = await Promise.allSettled([loadCalendar(), loadMail()]);
+    const [c, m] = await Promise.allSettled([loadCalendar(), loadMail(), loadYouTube()]);
     at = Date.now();
     const err = [c, m].find((x) => x.status === 'rejected');
     render(err ? err.reason.message : null);
@@ -1318,7 +1390,8 @@ const gg = (() => {
         token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000;
         canWrite = String(r.scope || '').includes('gmail.compose');
         canCal = String(r.scope || '').includes('calendar.events');
-        try { localStorage.setItem('brain.gtok', JSON.stringify({ token, exp: exp - 60000, canWrite, canCal })); localStorage.setItem('brain.gconn', '1'); } catch (e) {}
+        canYT = String(r.scope || '').includes('youtube.readonly');
+        try { localStorage.setItem('brain.gtok', JSON.stringify({ token, exp: exp - 60000, canWrite, canCal, canYT })); localStorage.setItem('brain.gconn', '1'); } catch (e) {}
         refresh();
       },
       error_callback: (e) => toast('Google sign-in ' + ((e && e.type) || 'failed').replace(/_/g, ' '))
@@ -1327,7 +1400,7 @@ const gg = (() => {
   }
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
-    token = ''; exp = 0; canWrite = false; canCal = false; contacts = []; book = []; bookAt = 0; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
+    token = ''; exp = 0; canWrite = false; canCal = false; canYT = false; data.yt = null; contacts = []; book = []; bookAt = 0; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
     try { localStorage.removeItem('brain.gtok'); localStorage.removeItem('brain.gconn'); } catch (e) {}
     hideCompose();
     render();
@@ -1335,7 +1408,7 @@ const gg = (() => {
   function init() {
     try {                                                              // reopen without signing in again while the hour-long token is still valid
       const sv = JSON.parse(localStorage.getItem('brain.gtok') || 'null');
-      if (sv && sv.token && sv.exp > Date.now()) { token = sv.token; exp = sv.exp + 60000; canWrite = !!sv.canWrite; canCal = !!sv.canCal; setTimeout(refresh, 300); }
+      if (sv && sv.token && sv.exp > Date.now()) { token = sv.token; exp = sv.exp + 60000; canWrite = !!sv.canWrite; canCal = !!sv.canCal; canYT = !!sv.canYT; setTimeout(refresh, 300); }
     } catch (e) {}
     render();
     if (!CID) return;
@@ -1358,17 +1431,19 @@ const gg = (() => {
   }
   // Extra notes for Jarvis, only when the question is about calendar or mail
   async function notesFor(q) {
-    if (!live()) return [];
+    if (!live()) return isYoutube(q) ? [{ title: 'YouTube access', type: 'google', text: 'Google is not connected. Tell the user to tap Connect Google (in the Calendar & Gmail section) and allow YouTube, then ask again.' }] : [];
     const wantCal = /calendar|schedule|meeting|appointment|agenda|event|busy|free|today|tomorrow|tonight|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|brief|status|plan/i.test(q);
     const wantMail = /mail|inbox|message|unread|sender|gmail|brief|status/i.test(q);
-    if (!wantCal && !wantMail) return [];
+    const wantYT = isYoutube(q);
+    if (!wantCal && !wantMail && !wantYT) return [];
     if (Date.now() - at > 5 * 60000) { try { await refresh(); } catch (e) {} }
     const out = [];
     if (wantCal && data.cal) out.push({ title: 'Your calendar', type: 'google', text: data.cal });
     if (wantMail && data.mail) out.push({ title: 'Your Gmail inbox', type: 'google', text: data.mail });
+    if (wantYT) out.unshift(...ytNotes());
     return out;
   }
-  return { init, notesFor, live, compose, isComposeRequest, isEventRequest, addEventDraft, isLookup, lookupAddress };
+  return { init, notesFor, live, isYoutube, compose, isComposeRequest, isEventRequest, addEventDraft, isLookup, lookupAddress };
 })();
 
 /* ---------- Services: quick answers that need no AI and no key (weather, date and time). Add more to SERVICES below. ---------- */
@@ -1776,7 +1851,7 @@ async function ask(question) {
   S.cited = new Set();
   try {
     let web = [];
-    const live = WEB_RE.test(question);
+    const live = WEB_RE.test(question) && !gg.isYoutube(question);
     if (live && !GKEY()) {                                         // no personal key: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {

@@ -127,3 +127,7 @@ With a Gemini key saved in the panel, questions that need current facts ("price 
 ## Market prices without any AI key
 
 The GitHub job runs `scripts/fetch_markets.py` every half hour and writes `site/markets.json` (gold, silver, Brent and WTI oil, natural gas, copper, Bitcoin, Ethereum, S&P 500, Dow, Nasdaq, Euro Stoxx 50, BEL 20, EUR/USD). Jarvis answers questions like "price of gold today" straight from that file, so it works on any key, on Gemini's free quota limits, and with no key at all. Prices come from Yahoo Finance with Stooq as backup and can be a few minutes delayed.
+
+## YouTube analysis
+
+Jarvis can read your own YouTube channel (read only) through the same Google sign-in as Calendar and Gmail. It loads subscribers, total views, your latest uploads with views, likes and comments, and from YouTube Analytics the last 28 days compared with the 28 days before (views, watch time, average view duration, subscribers gained and lost, likes, comments, shares, traffic sources and top videos). Ask things like "How is my channel doing?", "Which video did best this month?" or "Why did my views drop?". One-time setup: in Google Cloud (same project as the Google client ID) enable **YouTube Data API v3** and **YouTube Analytics API**, then in Jarvis tap Sign out and Connect Google again and tick the YouTube permissions. Pick the account or brand account that owns the channel.
