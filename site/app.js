@@ -705,12 +705,12 @@ async function brainSTT(blob) {
   if (GKEY() && IS_GEM()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
     const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
-    return gemGenerate({ contents: [{ role: 'user', parts: [{ text: 'Transcribe this audio exactly as spoken. Reply with only the transcript, nothing else. If there is no speech, reply with nothing.' }, { inline_data: { mime_type: ct, data: b64 } }] }], generationConfig: { maxOutputTokens: 400, temperature: 0 } }, true);
+    return gemGenerate({ contents: [{ role: 'user', parts: [{ text: 'Transcribe this audio exactly as spoken. The speaker may say the name "Jarvis" (for example "Hey Jarvis"). Reply with only the transcript, nothing else. If there is no speech, reply with nothing.' }, { inline_data: { mime_type: ct, data: b64 } }] }], generationConfig: { maxOutputTokens: 400, temperature: 0 } }, true);
   }
   if (GKEY()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
     const ext = ct.includes('webm') ? 'webm' : ct.includes('ogg') ? 'ogg' : ct.includes('wav') ? 'wav' : ct.includes('mpeg') ? 'mp3' : 'm4a';
-    const fd = new FormData(); fd.append('file', new File([blob], 'clip.' + ext, { type: ct })); fd.append('model', 'whisper-large-v3-turbo'); fd.append('response_format', 'json');
+    const fd = new FormData(); fd.append('file', new File([blob], 'clip.' + ext, { type: ct })); fd.append('model', 'whisper-large-v3-turbo'); fd.append('response_format', 'json'); fd.append('prompt', 'Hey Jarvis, what is the weather?');
     try {
       const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + GKEY() }, body: fd });
       const d = await r.json().catch(() => ({}));
@@ -2142,7 +2142,7 @@ const wake = (() => {
   const load = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const wCapable0 = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const WORD = { hey: '(?:hey|hay|hi|hello|okay|ok|a)', jarvis: '(?:jarvis|jarvus|jarves|jervis|jarvas|jarvic)' };
+  const WORD = { hey: '(?:hey|hay|hi|hello|okay|ok|a|good|hej)', jarvis: '(?:jarvis|jarvus|jarves|jervis|jarvas|jarvic|jarvi|javis|jervas|gervais|travis|davis|service|job|jobs)' };
   // Build a forgiving matcher: speech recognition often mishears "Jarvis" and "Hey"
   function matcher(phrase) {
     const words = norm(phrase).split(' ').filter(Boolean);
