@@ -777,6 +777,7 @@ function retrieve(question) {
 function renderAnswer(text) {
   const box = $('#answer');
   box.replaceChildren();
+  try { panel.classList.remove('closed'); box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}   // make sure the answer is on screen
   const cited = new Set();
   const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
   text.split(/(\[\[[^\]]+\]\])/g).forEach((part) => {
@@ -1863,7 +1864,7 @@ async function ask(question) {
         web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
       } catch (e) { /* answer without it */ }
     }
-    const r = await brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history });
+    const r = await Promise.race([brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 45000))]);
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
@@ -2002,7 +2003,7 @@ const convo = (() => {
     return spoke && on ? new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }) : null;
   }
 
-  async function transcribe(blob) { return brainSTT(blob); }
+  async function transcribe(blob) { return Promise.race([brainSTT(blob), new Promise((_, rej) => setTimeout(() => rej(new Error('Transcription took too long. Check your AI key and try again.')), 30000))]); }
 
   async function loop() {
     while (on) {
@@ -2025,9 +2026,11 @@ const convo = (() => {
       orb.set('thinking'); say2('Heard you, working on it…');
       let text = '';
       try { text = await transcribe(clip); } catch (e) { say2(e.message); break; }
-      if (!text.trim()) continue;
+      if (!text.trim()) { say2('Heard sound but no words. Try again.'); continue; }
       $('#askInput').value = '';
+      say2('You said: "' + text.trim().slice(0, 80) + '". Working on it…');
       await ask(text.trim());
+      say2('Answer is at the top of the panel.');
       await sleep(400);                                                     // let the answer start speaking
       while (on && (voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)))) await sleep(200);
       await sleep(300);
@@ -2038,8 +2041,9 @@ const convo = (() => {
   async function start() {
     if (on) return;
     const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx0 = new AC();                                               // must be created and resumed during the tap, or Safari keeps it silent
+    const ctx0 = new AC();
     try { ctx0.resume(); } catch (e) {}
+    try { if (typeof wake !== 'undefined') await wake.release(); } catch (e) {}
     try {
       tried = new Set();
       try { stream = await openStream(savedMic()); } catch (e) { if (e && e.name === 'NotFoundError' || e && e.name === 'OverconstrainedError') stream = await openStream(''); else throw e; }
@@ -2198,6 +2202,10 @@ const wake = (() => {
     if (wst === st) wst = null;
   }
   function stopW() { if (wst) wst.stop = true; }
+  async function release() {                                             // give the microphone back (iPad allows only one live capture at a time)
+    stopRec();
+    if (wst) { const st = wst; st.stop = true; try { if (st.stream) st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {} try { if (st.ctx) st.ctx.close(); } catch (e) {} await new Promise((r) => setTimeout(r, 250)); }
+  }
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
   function tick() {
     if (!enabled) { stopRec(); stopW(); return; }
@@ -2230,7 +2238,7 @@ const wake = (() => {
     if (enabled) document.addEventListener('click', function once() { document.removeEventListener('click', once); voiceBox.unlock(); tick(); }, { once: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-  return { split, matcher, norm };
+  return { split, matcher, norm, release };
 })();
 
 /* ---------- Free AI key (stored only in this browser) ---------- */
