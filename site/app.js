@@ -1449,7 +1449,7 @@ const gg = (() => {
 /* ---------- Services: quick answers that need no AI and no key (weather, date and time). Add more to SERVICES below. ---------- */
 const svc = (() => {
   const store = (k, v) => { try { if (v === undefined) return localStorage.getItem('brain.' + k) || ''; if (v) localStorage.setItem('brain.' + k, v); else localStorage.removeItem('brain.' + k); } catch (e) {} return ''; };
-  const getJSON = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error('service error ' + r.status); return r.json(); };
+  const getJSON = async (url) => { const ac = new AbortController(), t = setTimeout(() => ac.abort(), 12000); try { const r = await fetch(url, { signal: ac.signal }); if (!r.ok) throw new Error('service error ' + r.status); return await r.json(); } catch (e) { throw new Error(e && e.name === 'AbortError' ? 'the service did not answer in time' : e.message); } finally { clearTimeout(t); } };
   const cityRe = "([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'. -]{1,40}?)";
   // ---- places ----
   async function geocode(name) {
@@ -1459,11 +1459,14 @@ const svc = (() => {
     return { name: g.name + (g.country ? ', ' + g.country : ''), lat: g.latitude, lon: g.longitude, tz: g.timezone };
   }
   const home = () => { try { return JSON.parse(store('home') || 'null'); } catch (e) { return null; } };
-  function here() {                                                // browser location (asks permission once)
-    return new Promise((res) => {
+  function here() {                                                // browser location (asks permission once); never waits forever, falls back to the internet address
+    const gps = new Promise((res) => {
       if (!navigator.geolocation) { res(null); return; }
-      navigator.geolocation.getCurrentPosition((p) => res({ name: 'your location', lat: p.coords.latitude, lon: p.coords.longitude }), () => res(null), { timeout: 8000, maximumAge: 3600000 });
+      navigator.geolocation.getCurrentPosition((p) => res({ name: 'your location', lat: p.coords.latitude, lon: p.coords.longitude }), () => res(null), { timeout: 6000, maximumAge: 3600000 });
     });
+    const limit = new Promise((res) => setTimeout(() => res(null), 7000));
+    const ip = async () => { try { const d = await getJSON('https://ipapi.co/json/'); return d && d.latitude ? { name: d.city || 'your area', lat: d.latitude, lon: d.longitude } : null; } catch (e) { return null; } };
+    return Promise.race([gps, limit]).then((g) => g || ip());
   }
   // ---- weather ----
   const WMO = { 0: 'clear sky', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'foggy', 48: 'foggy', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 56: 'freezing drizzle', 57: 'freezing drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 66: 'freezing rain', 67: 'freezing rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 77: 'snow grains', 80: 'light showers', 81: 'showers', 82: 'heavy showers', 85: 'snow showers', 86: 'heavy snow showers', 95: 'thunderstorms', 96: 'thunderstorms with hail', 99: 'thunderstorms with hail' };
@@ -1788,7 +1791,7 @@ const svc = (() => {
     chat.busy = true; orb.set('thinking');
     $('#answer').replaceChildren(el('span', 'muted', 'One moment…'));
     try {
-      const text = await svcFound.run(q);
+      const text = await Promise.race([svcFound.run(q), new Promise((_, rej) => setTimeout(() => rej(new Error('it took too long')), 30000))]);
       renderAnswer(text); orb.set('idle'); say(text);
     } catch (e) {
       const msg = 'Sorry, that service is not reachable right now (' + (e && e.message ? e.message : 'error') + ').';
