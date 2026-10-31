@@ -1965,6 +1965,7 @@ const convo = (() => {
 
   // Wait for the user to speak, record until they pause, return the clip (or null if nobody spoke)
   async function record() {
+    if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser(); an.fftSize = 1024; src.connect(an);
     const buf = new Float32Array(an.fftSize);
@@ -2033,16 +2034,20 @@ const convo = (() => {
 
   async function start() {
     if (on) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx0 = new AC();                                               // must be created and resumed during the tap, or Safari keeps it silent
+    try { ctx0.resume(); } catch (e) {}
     try {
       tried = new Set();
       try { stream = await openStream(savedMic()); } catch (e) { if (e && e.name === 'NotFoundError' || e && e.name === 'OverconstrainedError') stream = await openStream(''); else throw e; }
       const id0 = stream.getAudioTracks()[0].getSettings().deviceId; if (id0) tried.add(id0);
       listMics();
     } catch (e) {
+      try { ctx0.close(); } catch (e2) {}
       say2(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
       return false;
     }
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx = ctx0;
     try { await ctx.resume(); } catch (e) {}
     on = true; $('#speak').checked = true; say2('Listening… speak now.');
     orb.el.classList.add('live');
@@ -2136,14 +2141,15 @@ const wake = (() => {
   async function startW() {
     if (wst || !enabled || !wCapable()) return;
     const st = wst = { stop: false, stream: null, ctx: null };
+    try { st.ctx = new (window.AudioContext || window.webkitAudioContext)(); st.ctx.resume(); } catch (e) {}   // created during the tick/tap so Safari lets it run
     try {
       const id = load('brain.mic') || '';
       const opts = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
       try { st.stream = await navigator.mediaDevices.getUserMedia({ audio: Object.assign(opts, id ? { deviceId: { exact: id } } : {}) }); }
       catch (e) { st.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    } catch (e) { wst = null; enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); return; }
+    } catch (e) { try { st.ctx.close(); } catch (e2) {} wst = null; enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); return; }
     if (st.stop) { st.stream.getTracks().forEach((t) => t.stop()); return; }
-    st.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!st.ctx) st.ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await st.ctx.resume(); } catch (e) {}
     say3(st.ctx.state === 'running' ? 'Listening for "' + phrase + '".' : 'Click anywhere on the page once so the browser starts the microphone.');
     const resume = () => { try { st.ctx.resume(); } catch (e) {} if (!st.stop) say3('Listening for "' + phrase + '".'); };
@@ -2153,10 +2159,12 @@ const wake = (() => {
     const buf = new Float32Array(an.fftSize);
     const level = () => { an.getFloatTimeDomainData(buf); let t = 0; for (const v of buf) t += v * v; return Math.sqrt(t / buf.length); };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    let floor = 0.006;
+    let floor = 0.006, shown = 0, hold = false;
     while (!st.stop) {
       await sleep(60);
+      if (st.ctx.state !== 'running') { try { st.ctx.resume(); } catch (e) {} }
       const lv = level(), thr = Math.max(floor * 3.2, floor + 0.012, 0.015);
+      if (Date.now() - shown > 400 && !hold) { shown = Date.now(); say3('Listening for "' + phrase + '"  ' + '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor(lv / 0.06 * 8))] + (st.ctx.state !== 'running' ? '  (tap the page once to start the microphone)' : '')); }
       if (lv <= thr) { floor = floor * 0.97 + Math.min(lv, 0.03) * 0.03; continue; }
       // someone is speaking: record until a pause
       const rec = new MediaRecorder(st.stream), chunks = [];
@@ -2178,7 +2186,7 @@ const wake = (() => {
       wsent.push(nowMs);
       try {
         const text = await brainSTT(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
-        if (!st.stop && text) onHeard(text);
+        if (!st.stop && text) { if (split(text, phrase) == null) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else onHeard(text); }
       } catch (e) { say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
     }
     try { st.ctx.close(); } catch (e) {}
