@@ -17,4 +17,4 @@
 - Photograph more confirmed African specimens.
 - Find open-source sample images and train the real model.
 
-Related: timber news category in [[Seizure Watch]]. Hub: [[Law Enforcement Tools]].
+African wood reference notes for Jarvis: [[African CITES Wood]] and [[African CITES Wood Species]]. Related: timber news category in [[Seizure Watch]]. Hub: [[Law Enforcement Tools]].
