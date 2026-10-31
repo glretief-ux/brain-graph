@@ -2159,6 +2159,8 @@ const wake = (() => {
     if (!m) return null;
     return t.replace(/[,.!?]+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').slice(m.index + m[0].length).trim();
   }
+  let wakeAny = load('brain.wakeAny') === '1';
+  const NOISE = /^(?:you|bye|thank you|thanks|thanks for watching|okay|ok|hmm+|um+|uh+|yeah|yes|no|oh|so|\.+)[ .!?]*$/i;
   let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // Safari cannot keep the browser's speech recognition running, so it listens through the AI key
   let srBroken = load('brain.srBroken') === '1' || (isIOS && wCapable0()), quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
@@ -2188,7 +2190,8 @@ const wake = (() => {
       if (t.length > 1) { say3('Heard: "' + t.slice(0, 70) + '"'); $('#speak').checked = true; $('#askInput').value = ''; ask(t); }
       return;
     }
-    const rest = split(t, phrase);
+    let rest = split(t, phrase);
+    if (rest == null && wakeAny && t.length > 3 && !NOISE.test(t)) rest = t;      // desk mode: answer anything said
     if (rest == null) return;
     lastWake = Date.now(); voiceBox.unlock(); $('#speak').checked = true;
     if (rest.length > 2) { toast('Heard: ' + rest); $('#askInput').value = ''; ask(rest); return; }
@@ -2276,7 +2279,7 @@ const wake = (() => {
       try {
         const text = await brainSTT(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
         vlog('wake: transcript "' + String(text).slice(0, 60) + '"');
-        if (!st.stop && text) { if (armedUntil <= Date.now() && split(text, phrase) == null) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else wHeard(text); }
+        if (!st.stop && text) { if (armedUntil <= Date.now() && split(text, phrase) == null && !(wakeAny && text.trim().length > 3 && !NOISE.test(text.trim()))) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else wHeard(text); }
       } catch (e) { vlog('wake: transcription failed: ' + String(e.message || e)); say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
     }
     try { st.ctx.close(); } catch (e) {}
@@ -2315,6 +2318,8 @@ const wake = (() => {
       stopRec(); stopW(); if (enabled) say3('Listening for "' + v + '".');
     };
     ph.addEventListener('change', savePh);
+    const any = document.getElementById('wakeAny');
+    if (any) { any.checked = wakeAny; any.addEventListener('change', () => { wakeAny = any.checked; store('brain.wakeAny', wakeAny ? '1' : '0'); say3(wakeAny ? 'Desk mode: I answer anything you say.' : 'Listening for "' + phrase + '".'); }); }
     timer = setInterval(tick, 1000);
     document.addEventListener('visibilitychange', tick);
     if (enabled) say3('Wake phrase is on. Click anywhere on the page once so the browser allows the microphone and voice.');
