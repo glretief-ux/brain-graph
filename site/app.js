@@ -2137,7 +2137,8 @@ const wake = (() => {
     toast('Yes?');
     if (convo.supported()) convo.toggle(); else orb.el.click();
   }
-  let armedUntil = 0;
+  let armedUntil = 0, gestured = false, wRetryAt = 0;
+  ['pointerdown', 'touchstart', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { gestured = true; }, true));
   function beep() { try { const c = wst && wst.ctx; if (!c || c.state !== 'running') return; const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.12); } catch (e) {} }
   function wHeard(text) {                                               // used by the key-based listener: "hey jarvis" arms it, the next phrase is the question
     const t = String(text || '').trim();
@@ -2177,13 +2178,22 @@ const wake = (() => {
   async function startW() {
     if (wst || !enabled || !wCapable()) return;
     const st = wst = { stop: false, stream: null, ctx: null };
+    vlog('wake: starting the microphone');
     try { st.ctx = new (window.AudioContext || window.webkitAudioContext)(); st.ctx.resume(); } catch (e) {}   // created during the tick/tap so Safari lets it run
+    const gum = (o) => Promise.race([navigator.mediaDevices.getUserMedia(o), new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 10000))]);
     try {
       const id = load('brain.mic') || '';
       const opts = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-      try { st.stream = await navigator.mediaDevices.getUserMedia({ audio: Object.assign(opts, id ? { deviceId: { exact: id } } : {}) }); }
-      catch (e) { st.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    } catch (e) { try { st.ctx.close(); } catch (e2) {} wst = null; enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); return; }
+      try { st.stream = await gum(Object.assign(opts, id ? { deviceId: { exact: id } } : {})); }
+      catch (e) { if (e && e.message === 'TIMEOUT') throw e; st.stream = await gum({ audio: true }); }
+    } catch (e) {
+      try { st.ctx.close(); } catch (e2) {}
+      st.stop = true; wst = null;
+      wRetryAt = Date.now() + 20000;
+      if (e && e.message === 'TIMEOUT') { vlog('wake: microphone did not answer'); say3('The microphone did not answer. Tap the page once, then untick and tick the box again.'); return; }
+      vlog('wake: microphone refused: ' + (e && e.name));
+      enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); return;
+    }
     if (st.stop) { st.stream.getTracks().forEach((t) => t.stop()); return; }
     if (!st.ctx) st.ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await st.ctx.resume(); } catch (e) {}
@@ -2241,7 +2251,7 @@ const wake = (() => {
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
   function tick() {
     if (!enabled) { stopRec(); stopW(); return; }
-    if ((!SRW || srBroken) && wCapable()) { if (convo.isOn()) { stopW(); return; } if (!wst && !document.hidden) startW(); return; }
+    if ((!SRW || srBroken) && wCapable()) { if (convo.isOn()) { stopW(); return; } if (!wst && !document.hidden && Date.now() > wRetryAt) { if (isIOS && !gestured) { if (!/Tap the page/.test(status)) say3('Tap the page once to start listening.'); } else startW(); } return; }
     if (busy()) { if (rec) stopRec(); return; }
     if (fails > 6) { enabled = false; store(KEY_ON, '0'); sync(); say3('Wake phrase stopped: the browser kept refusing speech recognition. Tap the orb instead.'); return; }
     if (!rec) startRec();
