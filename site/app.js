@@ -326,7 +326,7 @@ function select(i, center) {
   S.nb = new Set(i >= 0 ? S.adj[i].filter((j) => !hiddenNode(j)) : []);
   if (i >= 0) {
     try { history.replaceState(null, '', '#' + encodeURIComponent(S.nodes[i].id)); } catch (e) { /* file:// */ }
-    if (isMobile() && panel.classList.contains('closed')) panel.classList.remove('closed');
+    if (panel.classList.contains('closed')) panel.classList.remove('closed');   // show the note's details on any screen
     if (center) centerOn(i);
   }
   renderInspector();
