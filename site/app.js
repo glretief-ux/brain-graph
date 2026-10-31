@@ -2074,6 +2074,7 @@ const wake = (() => {
   const KEY_ON = 'brain.wake', KEY_PH = 'brain.wakePhrase', DEFAULT = 'hey jarvis';
   const store = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
   const load = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const wCapable0 = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const WORD = { hey: '(?:hey|hay|hi|hello|okay|ok|a)', jarvis: '(?:jarvis|jarvus|jarves|jervis|jarvas|jarvic)' };
   // Build a forgiving matcher: speech recognition often mishears "Jarvis" and "Hey"
@@ -2093,7 +2094,8 @@ const wake = (() => {
     return t.replace(/[,.!?]+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').slice(m.index + m[0].length).trim();
   }
   let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
-  let srBroken = load('brain.srBroken') === '1', quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // Safari cannot keep the browser's speech recognition running, so it listens through the AI key
+  let srBroken = load('brain.srBroken') === '1' || (isIOS && wCapable0()), quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
   const wCapable = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const say3 = (m) => { status = m; const e = document.getElementById('wakeStatus'); if (e) e.textContent = m; };
   const busy = () => convo.isOn() || orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) || Date.now() - lastWake < 4000 || document.hidden;
@@ -2117,7 +2119,10 @@ const wake = (() => {
     r.onstart = () => { running = true; say3('Listening for "' + phrase + '".'); };
     r.onresult = (ev) => { for (let i = ev.resultIndex; i < ev.results.length; i++) if (ev.results[i].isFinal) onHeard(ev.results[i][0].transcript); };
     r.onerror = (ev) => {
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); }
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        if (wCapable()) { srBroken = true; stopRec(); say3('Switching to listening through your AI key.'); }          // the browser's own speech recognition is refused: use the microphone directly
+        else { enabled = false; store(KEY_ON, '0'); sync(); say3('The browser blocked the microphone. Allow it (lock icon in the address bar) and tick the box again.'); }
+      }
       else if (ev.error === 'network' || ev.error === 'language-not-supported') { if (wCapable()) { srBroken = true; store('brain.srBroken', '1'); stopRec(); say3('This browser cannot hear the wake phrase itself, so Jarvis listens through your AI key instead.'); } else { fails++; say3('Wake phrase needs a free AI key (see Free AI key below) or a browser with speech recognition.'); } }
       else if (ev.error !== 'no-speech' && ev.error !== 'aborted') fails++;
     };
