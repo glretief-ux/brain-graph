@@ -100,7 +100,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     # Full note text for the chat assistant (kept separate so the graph loads fast)
     out.with_name("notes.json").write_text(json.dumps([
-        {"title": n["title"], "type": n["type"], "text": body.strip()[:3000]}
+        {"title": n["title"], "type": n["type"], "text": body.strip()[:60000]}
         for n, body in zip(nodes, bodies)
     ], ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     out.write_text(json.dumps({

@@ -6,6 +6,7 @@ The entry point of the brain. Everything hangs off four hubs:
 - [[Law Enforcement Tools]] - tools and dashboards for officers
 - [[Training Courses]] - PCCP training material
 - [[Video and Content]] - the YouTube channel and its tooling
+- [[GitHub Repos]] - every repository and its site
 - [[Everyday Life]] - weather, search and public transport
 
 What to do next: [[Open Items]]. Working rules: [[Lessons Learned]].

@@ -9,3 +9,5 @@ Training: [[Controlled Deliveries Course]], [[Cultural Heritage Course]].
 Content: [[Whisky Lovers Society]], [[Whisky Dashboard]], [[Whisky vs AI]].
 
 Personal: [[Stock Simulation]], [[Brain Graph]].
+
+All repositories: [[GitHub Repos]].

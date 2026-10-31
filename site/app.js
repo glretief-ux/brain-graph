@@ -735,9 +735,12 @@ const BOOSTS = [
 function scoreNotes(question) {
   const words = question.toLowerCase().match(/[a-z0-9À-ɏ]{3,}/g) || [];
   const terms = words.filter((w) => !STOP.has(w));
+  for (const c of question.match(/\d{2,7}-\d{2}-\d/g) || []) terms.push(c);
+  const pairs = []; for (let i = 0; i + 1 < words.length; i++) if (!STOP.has(words[i]) && !STOP.has(words[i + 1])) pairs.push(words[i] + ' ' + words[i + 1]);
   return NOTES.map((n) => {
     const title = n.title.toLowerCase(), text = n.text.toLowerCase();
     let s = 0;
+    for (const pr of pairs) { let at = text.indexOf(pr), c = 0; while (at !== -1 && c < 3) { s += 8; c++; at = text.indexOf(pr, at + pr.length); } }
     for (const t of terms) {
       if (title.includes(t)) s += 5;
       let at = text.indexOf(t), c = 0;
@@ -760,8 +763,24 @@ function localAnswer(question) {
   return 'Best matches:\n' + top.map((x) => `• [[${x.n.title}]] ${firstSentence(x.n.text)}`).join('\n');
 }
 
+// Long notes (e.g. the chemical lists) are cut down to the lines that match the question, so the answer is not lost past the first 1000 characters.
+function snippet(n, question, max = 950) {
+  const text = String(n.text || '');
+  if (text.length <= max) return text;
+  const terms = (question.toLowerCase().match(/\d{2,7}-\d{2}-\d|\bun\s?\d{4}\b|[a-z0-9À-ɏ]{3,}/g) || []).map((t) => t.replace(/\s+/g, '')).filter((t) => !STOP.has(t));
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const scored = lines.map((l, i) => { const low = l.toLowerCase().replace(/\s+/g, ' '); let sc = 0; for (const t of terms) if (low.includes(t) || low.replace(/ /g, '').includes(t)) sc += 1 + (low.slice(0, 80).includes(t) ? 2 : 0); return { l, i, sc }; });
+  const head = lines[0] && lines[0].length < 140 ? lines[0] : '';
+  const pick = scored.filter((x) => x.sc > 0 && x.l !== head).sort((a, b) => b.sc - a.sc || a.i - b.i);
+  if (!pick.length) return text.slice(0, max);
+  let budget = max - head.length, out = [];
+  for (const x of pick) { const t = x.l.length > budget ? x.l.slice(0, Math.max(budget, 0)) : x.l; if (t.length < 30 && out.length) break; out.push({ i: x.i, t }); budget -= t.length + 1; if (budget < 40) break; }
+  return (head ? head + '\n' : '') + out.sort((a, b) => a.i - b.i).map((x) => x.t).join('\n');
+}
+const withSnippets = (list, q) => list.map((n) => (String(n.text || '').length > 950 ? { ...n, text: snippet(n, q) } : n));
+
 function retrieve(question) {
-  if (NOTES.length <= 25) return NOTES;                        // small vault: send everything
+  if (NOTES.length <= 25) return withSnippets(NOTES, question);   // small vault: send everything
   const scored = scoreNotes(question);
   const top = scored.slice(0, 12).filter((x) => x.s > 0).map((x) => x.n);
   // pull in direct neighbours of the best matches so related notes come along
@@ -775,7 +794,7 @@ function retrieve(question) {
       if (nt && !seen.has(nt.title) && top.length < 22) { top.push(nt); seen.add(nt.title); }
     }
   }
-  return top.length ? top : NOTES.slice(0, 20);
+  return withSnippets(top.length ? top : NOTES.slice(0, 20), question);
 }
 
 function renderAnswer(text) {
