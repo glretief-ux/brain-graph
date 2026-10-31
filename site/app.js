@@ -826,6 +826,9 @@ const voiceBox = (() => {
   const xiVoice = () => { try { return localStorage.getItem('brain.xiVoice') || ''; } catch (e) { return ''; } } ;
   const XI_DANIEL = 'onwK4e9ZLuTAKqWW03F9';                               // ElevenLabs premade British male voice: calm, formal, butler-like
   let xiDown = false;
+  const KOV = '__ko';                                                    // Kokoro voice running on this device (free, no limits, same family as the PC Jarvis voice)
+  const koVoice = () => { try { return localStorage.getItem('brain.koVoice') || 'bm_george'; } catch (e) { return 'bm_george'; } };
+  let koDown = false, koP = null;
   const AI = '__ai', PRO = '__pro', VSV = '__vs';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
   const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
   const player = new Audio();
@@ -839,9 +842,10 @@ const voiceBox = (() => {
   };
   const aiOn = () => !!CHAT_URL && !aiDown && !!sel() && (sel().value === AI || sel().value === PRO);
   const vsOn = () => VS.configured() && !!sel() && sel().value === VSV;
+  const koOn = () => !koDown && !!sel() && sel().value === KOV;
   const xiOn = () => !!xiKey() && !xiDown && !!sel() && sel().value === XIV;
   const isPro = () => !!sel() && sel().value === PRO && !proDown;
-  const cap = () => (xiOn() ? 380 : vsOn() ? 900 : isPro() ? 300 : 600);
+  const cap = () => (koOn() ? 700 : xiOn() ? 380 : vsOn() ? 900 : isPro() ? 300 : 600);
   const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
   let actx = null, node = null;
   const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
@@ -887,6 +891,35 @@ const voiceBox = (() => {
       if (my !== token) return;
       busyAI = false; aiDown = true;
       toast('Jarvis voice failed (' + (e && e.message ? e.message : 'error') + '), using the device voice');
+      onfail();
+    }
+  };
+  const koLoad = () => koP || (koP = (async () => {
+    toast('Loading the Jarvis voice onto this device (about 90 MB, only the first time)…');
+    const m = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+    let last = 0;
+    const t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'wasm', progress_callback: (p) => { if (p && p.status === 'progress' && Date.now() - last > 1500) { last = Date.now(); vlog('voice download ' + Math.round(p.progress || 0) + '%'); } } });
+    toast('Jarvis voice is ready.');
+    return t;
+  })().catch((e) => { koP = null; throw e; }));
+  const speakKO = async (text, onstart, onend, onfail) => {
+    const my = ++token; busyAI = true;
+    try {
+      const tts = await koLoad();
+      if (my !== token) return;
+      const parts = (String(text).match(/[^.!?]+[.!?]*\s*/g) || [String(text)]).map((x) => x.trim()).filter(Boolean);
+      let next = tts.generate(parts[0], { voice: koVoice() });
+      for (let i = 0; i < parts.length; i++) {
+        const audio = await next;
+        if (my !== token) return;
+        next = i + 1 < parts.length ? tts.generate(parts[i + 1], { voice: koVoice() }) : null;
+        const blob = audio.toBlob(), lastPart = i === parts.length - 1;
+        await new Promise((res, rej) => { playBlob(blob, my, lastPart ? () => { onend(); res(); } : res).then(() => { if (i === 0) onstart(); }).catch(rej); });
+      }
+    } catch (e) {
+      if (my !== token) return;
+      busyAI = false; koDown = true;
+      toast('The on-device Jarvis voice could not start (' + (e && e.message ? e.message : 'error') + '), using another voice');
       onfail();
     }
   };
@@ -951,6 +984,7 @@ const voiceBox = (() => {
       const pr = document.createElement('option'); pr.value = PRO; pr.textContent = 'Jarvis premium voice (limited)';
       opts.unshift(f, pr);
     }
+    { const k = document.createElement('option'); k.value = KOV; k.textContent = 'Jarvis Kokoro voice (on this device, free)'; opts.unshift(k); }
     if (xiKey()) {
       const x = document.createElement('option'); x.value = XIV; x.textContent = 'Jarvis ElevenLabs voice (British)';
       opts.unshift(x);
@@ -960,7 +994,7 @@ const voiceBox = (() => {
       opts.unshift(v);
     }
     sel().replaceChildren(...opts);
-    const ok = saved === XIV ? !!xiKey() : saved === VSV ? VS.configured() : (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
+    const ok = saved === KOV ? true : saved === XIV ? !!xiKey() : saved === VSV ? VS.configured() : (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
     sel().value = ok ? saved : (xiKey() ? XIV : CHAT_URL ? AI : voices.length ? voices[0].voiceURI : VSV);
   };
   const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
@@ -971,6 +1005,7 @@ const voiceBox = (() => {
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
+      if (koOn()) { koDown = false; speakKO('At your service, sir.', () => {}, () => {}, () => {}); return; }
       if (xiOn()) { speakXI('At your service.', () => {}, () => {}, () => {}); return; }
       if (vsOn()) { speakVS('At your service.', () => {}, () => {}, () => {}); return; }
       if (aiOn()) { speakAI('At your service.', () => {}, () => {}, () => {}); return; }
@@ -980,7 +1015,7 @@ const voiceBox = (() => {
       speechSynthesis.speak(u);
     });
   };
-  return { init, current, aiOn, vsOn, xiOn, xiReset: () => { xiDown = false; }, cap, speakAI, speakVS, speakXI, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
+  return { init, current, aiOn, vsOn, koOn, speakKO, xiOn, xiReset: () => { xiDown = false; }, cap, speakAI, speakVS, speakXI, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
 })();
 
 // Small on-screen voice log: a photo of it shows exactly how far a voice request got
@@ -991,6 +1026,12 @@ function say(text) {
   const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
+  if (voiceBox.koOn()) {
+    let t = clean.slice(0, voiceBox.cap());
+    if (clean.length > t.length) { const k = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (k > 80) t = t.slice(0, k + 1); }
+    voiceBox.speakKO(t, () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    return;
+  }
   if (voiceBox.xiOn()) {
     let t = clean.slice(0, voiceBox.cap());
     if (clean.length > t.length) { const k = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (k > 80) t = t.slice(0, k + 1); }
