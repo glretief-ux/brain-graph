@@ -925,7 +925,10 @@ const voiceBox = (() => {
   return { init, current, aiOn, vsOn, cap, speakAI, speakVS, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
 })();
 
+// Small on-screen voice log: a photo of it shows exactly how far a voice request got
+const vlog = (m) => { try { const e = document.getElementById('vlog'); if (!e) return; const t = new Date().toLocaleTimeString('en-GB'); const L = (e._l = e._l || []); L.push(t + ' ' + String(m).slice(0, 110)); while (L.length > 9) L.shift(); e.textContent = L.join('\n'); } catch (x) {} };
 function say(text) {
+  vlog('answer: speaking ' + (('speechSynthesis' in window) ? 'with this device voice' : 'not supported') + ', "read aloud" ' + ($('#speak').checked ? 'on' : 'off'));
   if (!$('#speak').checked) return;
   const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
@@ -1873,6 +1876,7 @@ async function ask(question) {
     orb.set('idle');
     say(data.answer);
   } catch (e) {
+    vlog('ask failed: ' + e.message);
     box.replaceChildren(el('span', 'err', 'Could not get an answer: ' + e.message));
     orb.set('idle');
   } finally {
@@ -2000,6 +2004,7 @@ const convo = (() => {
     }
     lastPeak = peak;
     rec.stop(); await stopped; src.disconnect();
+    vlog('orb: recording done, loudest ' + peak.toFixed(3) + ', ' + (spoke ? 'speech heard' : 'no speech'));
     return spoke && on ? new Blob(chunks, { type: rec.mimeType || 'audio/mp4' }) : null;
   }
 
@@ -2025,11 +2030,14 @@ const convo = (() => {
       }
       orb.set('thinking'); say2('Heard you, working on it…');
       let text = '';
-      try { text = await transcribe(clip); } catch (e) { say2(e.message); break; }
+      vlog('orb: sending ' + Math.round(clip.size / 1024) + ' KB (' + (clip.type || '?') + ') to the AI key');
+      try { text = await transcribe(clip); } catch (e) { vlog('orb: transcription failed: ' + e.message); say2(e.message); break; }
+      vlog('orb: transcript "' + String(text).slice(0, 60) + '"');
       if (!text.trim()) { say2('Heard sound but no words. Try again.'); continue; }
       $('#askInput').value = '';
       say2('You said: "' + text.trim().slice(0, 80) + '". Working on it…');
       await ask(text.trim());
+      vlog('orb: answer finished');
       say2('Answer is at the top of the panel.');
       await sleep(400);                                                     // let the answer start speaking
       while (on && (voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)))) await sleep(200);
@@ -2056,6 +2064,7 @@ const convo = (() => {
     }
     ctx = ctx0;
     try { await ctx.resume(); } catch (e) {}
+    vlog('orb: mic open (' + ((stream.getAudioTracks()[0] || {}).label || '?') + '), audio ' + ctx.state);
     on = true; $('#speak').checked = true; say2('Listening… speak now.');
     orb.el.classList.add('live');
     loop();
@@ -2158,6 +2167,7 @@ const wake = (() => {
     if (st.stop) { st.stream.getTracks().forEach((t) => t.stop()); return; }
     if (!st.ctx) st.ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await st.ctx.resume(); } catch (e) {}
+    vlog('wake: mic open, audio ' + st.ctx.state);
     say3(st.ctx.state === 'running' ? 'Listening for "' + phrase + '".' : 'Click anywhere on the page once so the browser starts the microphone.');
     const resume = () => { try { st.ctx.resume(); } catch (e) {} if (!st.stop) say3('Listening for "' + phrase + '".'); };
     document.addEventListener('pointerdown', resume, { once: true });
@@ -2191,10 +2201,12 @@ const wake = (() => {
       const nowMs = Date.now(); wsent = wsent.filter((t) => nowMs - t < 60000);
       if (wsent.length >= 8) continue;                                    // keeps free AI limits safe if the room is noisy
       wsent.push(nowMs);
+      vlog('wake: heard a phrase, sending ' + Math.round(chunks.reduce((a, c) => a + c.size, 0) / 1024) + ' KB');
       try {
         const text = await brainSTT(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+        vlog('wake: transcript "' + String(text).slice(0, 60) + '"');
         if (!st.stop && text) { if (split(text, phrase) == null) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else onHeard(text); }
-      } catch (e) { say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
+      } catch (e) { vlog('wake: transcription failed: ' + String(e.message || e)); say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
     }
     try { st.ctx.close(); } catch (e) {}
     try { st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
