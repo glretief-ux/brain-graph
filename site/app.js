@@ -515,7 +515,7 @@ async function gemCall(model, payload) {
   const d = await r.json().catch(() => ({}));
   return { r, d };
 }
-async function gemPick() {
+async function gemPick(fast) {
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(GKEY()));
   const d = await r.json().catch(() => ({}));
   const ids = ((d && d.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name).replace('models/', ''));
@@ -523,18 +523,22 @@ async function gemPick() {
   const flash = ids.filter((id) => /^gemini-[\d.]+-flash(-\d+)?$/.test(id)).sort((x, y) => ver(y) - ver(x));
   const lite = ids.filter((id) => /^gemini-[\d.]+-flash-lite(-\d+)?$/.test(id)).sort((x, y) => ver(y) - ver(x));
   const rest = ids.filter((id) => /flash/.test(id) && !/image|tts|live|thinking|robotics|audio/.test(id) && !flash.includes(id) && !lite.includes(id));
-  return [...flash, 'gemini-flash-latest', ...lite, 'gemini-flash-lite-latest', ...rest].filter((v, i, a) => a.indexOf(v) === i);
+  const all = fast ? [...lite, 'gemini-flash-lite-latest', ...flash, 'gemini-flash-latest', ...rest] : [...flash, 'gemini-flash-latest', ...lite, 'gemini-flash-lite-latest', ...rest];
+  return all.filter((v, i, a) => a.indexOf(v) === i);
 }
 const GEM_GONE = /model|not found|not supported|no longer available|deprecated|quota|exceeded|rate.?limit|resource.?exhausted|overloaded|unavailable/i;
-async function gemGenerate(payload) {
-  let { r, d } = await gemCall(gemModel || 'gemini-flash-latest', payload);
-  if (!r.ok && GEM_GONE.test((d.error && d.error.message) || '')) {
-    const tried = [gemModel || 'gemini-flash-latest'];
-    for (const alt of (await gemPick()).slice(0, 12)) {
+let gemFast = '';
+async function gemGenerate(payload, fast) {                              // fast: small quick model (used for speech-to-text, where speed matters more than depth)
+  const first = fast ? (gemFast || 'gemini-flash-lite-latest') : (gemModel || 'gemini-flash-latest');
+  let { r, d } = await gemCall(first, payload);
+  if (r.ok) { if (fast) gemFast = first; }
+  else if (GEM_GONE.test((d.error && d.error.message) || '')) {
+    const tried = [first];
+    for (const alt of (await gemPick(fast)).slice(0, 12)) {
       if (tried.includes(alt)) continue;
       tried.push(alt);
       ({ r, d } = await gemCall(alt, payload));
-      if (r.ok) { gemModel = alt; break; }
+      if (r.ok) { if (fast) gemFast = alt; else gemModel = alt; break; }
       if (!GEM_GONE.test((d.error && d.error.message) || '')) break;
     }
   }
@@ -701,7 +705,7 @@ async function brainSTT(blob) {
   if (GKEY() && IS_GEM()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
     const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
-    return gemGenerate({ contents: [{ role: 'user', parts: [{ text: 'Transcribe this audio exactly as spoken. Reply with only the transcript, nothing else. If there is no speech, reply with nothing.' }, { inline_data: { mime_type: ct, data: b64 } }] }], generationConfig: { maxOutputTokens: 400, temperature: 0 } });
+    return gemGenerate({ contents: [{ role: 'user', parts: [{ text: 'Transcribe this audio exactly as spoken. Reply with only the transcript, nothing else. If there is no speech, reply with nothing.' }, { inline_data: { mime_type: ct, data: b64 } }] }], generationConfig: { maxOutputTokens: 400, temperature: 0 } }, true);
   }
   if (GKEY()) {
     const ct = (blob.type || 'audio/webm').split(';')[0];
@@ -2117,6 +2121,7 @@ const wake = (() => {
   let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // Safari cannot keep the browser's speech recognition running, so it listens through the AI key
   let srBroken = load('brain.srBroken') === '1' || (isIOS && wCapable0()), quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
+  const wBusy = () => orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending));
   const wCapable = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   const say3 = (m) => { status = m; const e = document.getElementById('wakeStatus'); if (e) e.textContent = m; };
   const busy = () => convo.isOn() || orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending)) || Date.now() - lastWake < 4000 || document.hidden;
@@ -2131,6 +2136,21 @@ const wake = (() => {
     if (rest.length > 2) { toast('Heard: ' + rest); $('#askInput').value = ''; ask(rest); return; }   // "hey jarvis what is the weather"
     toast('Yes?');
     if (convo.supported()) convo.toggle(); else orb.el.click();
+  }
+  let armedUntil = 0;
+  function beep() { try { const c = wst && wst.ctx; if (!c || c.state !== 'running') return; const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.12); } catch (e) {} }
+  function wHeard(text) {                                               // used by the key-based listener: "hey jarvis" arms it, the next phrase is the question
+    const t = String(text || '').trim();
+    if (armedUntil > Date.now()) {
+      armedUntil = 0;
+      if (t.length > 1) { say3('Heard: "' + t.slice(0, 70) + '"'); $('#speak').checked = true; $('#askInput').value = ''; ask(t); }
+      return;
+    }
+    const rest = split(t, phrase);
+    if (rest == null) return;
+    lastWake = Date.now(); voiceBox.unlock(); $('#speak').checked = true;
+    if (rest.length > 2) { toast('Heard: ' + rest); $('#askInput').value = ''; ask(rest); return; }
+    armedUntil = Date.now() + 12000; beep(); toast('Yes?'); say3('Yes? Speak now.'); vlog('wake: armed, say your question');
   }
   function startRec() {
     if (!SRW || rec || !enabled) return;
@@ -2182,7 +2202,7 @@ const wake = (() => {
       if (st.ctx.state !== 'running') { try { st.ctx.resume(); } catch (e) {} }
       const lv = level(), thr = Math.max(floor * 3.2, floor + 0.012, 0.015);
       if (Date.now() - shown > 400 && !hold) { shown = Date.now(); say3('Listening for "' + phrase + '"  ' + '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor(lv / 0.06 * 8))] + (st.ctx.state !== 'running' ? '  (tap the page once to start the microphone)' : '')); }
-      if (lv <= thr) { floor = floor * 0.97 + Math.min(lv, 0.03) * 0.03; continue; }
+      if (lv <= thr || wBusy()) { floor = floor * 0.97 + Math.min(lv, 0.03) * 0.03; if (wBusy()) await sleep(250); continue; }
       // someone is speaking: record until a pause
       const rec = new MediaRecorder(st.stream), chunks = [];
       rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
@@ -2197,7 +2217,7 @@ const wake = (() => {
       }
       rec.stop(); await done;
       const dur = performance.now() - t0;
-      if (st.stop || dur < 450) continue;
+      if (st.stop || dur < 450 || wBusy()) continue;
       const nowMs = Date.now(); wsent = wsent.filter((t) => nowMs - t < 60000);
       if (wsent.length >= 8) continue;                                    // keeps free AI limits safe if the room is noisy
       wsent.push(nowMs);
@@ -2205,7 +2225,7 @@ const wake = (() => {
       try {
         const text = await brainSTT(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
         vlog('wake: transcript "' + String(text).slice(0, 60) + '"');
-        if (!st.stop && text) { if (split(text, phrase) == null) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else onHeard(text); }
+        if (!st.stop && text) { if (armedUntil <= Date.now() && split(text, phrase) == null) { hold = true; say3('Heard: "' + text.slice(0, 60) + '". Start with "' + phrase + '".'); setTimeout(() => { hold = false; }, 4000); } else wHeard(text); }
       } catch (e) { vlog('wake: transcription failed: ' + String(e.message || e)); say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
     }
     try { st.ctx.close(); } catch (e) {}
@@ -2221,8 +2241,8 @@ const wake = (() => {
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
   function tick() {
     if (!enabled) { stopRec(); stopW(); return; }
-    if (busy()) { if (rec) stopRec(); stopW(); return; }
-    if ((!SRW || srBroken) && wCapable()) { if (!wst) startW(); return; }
+    if ((!SRW || srBroken) && wCapable()) { if (convo.isOn()) { stopW(); return; } if (!wst && !document.hidden) startW(); return; }
+    if (busy()) { if (rec) stopRec(); return; }
     if (fails > 6) { enabled = false; store(KEY_ON, '0'); sync(); say3('Wake phrase stopped: the browser kept refusing speech recognition. Tap the orb instead.'); return; }
     if (!rec) startRec();
   }
@@ -2270,12 +2290,12 @@ const wake = (() => {
       const gem = !/^gsk_/.test(k);
       const r = gem ? await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=5&key=' + encodeURIComponent(k)) : await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
       if (!r.ok) throw new Error(r.status === 401 || r.status === 400 || r.status === 403 ? 'This key is not valid' : 'Key check failed (' + r.status + ')');
-      localStorage.setItem('brain.groq', k); groqModel = ''; gemModel = '';
+      localStorage.setItem('brain.groq', k); groqModel = ''; gemModel = ''; gemFast = '';
       toast('Groq key works and is saved'); show();
     } catch (e) { toast(e.message === 'Failed to fetch' ? 'Could not reach Groq. Check your internet or VPN.' : e.message); }
     btn.disabled = false;
   });
-  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; gemModel = ''; show(); });
+  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; gemModel = ''; gemFast = ''; show(); });
   show();
 })();
 
