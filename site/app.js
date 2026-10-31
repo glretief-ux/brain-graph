@@ -802,6 +802,11 @@ function renderAnswer(text) {
 /* ---------- Jarvis voice ---------- */
 const voiceBox = (() => {
   const KEY = 'jarvisVoice';
+  const XIV = '__xi';
+  const xiKey = () => { try { return localStorage.getItem('brain.xi') || ''; } catch (e) { return ''; } };
+  const xiVoice = () => { try { return localStorage.getItem('brain.xiVoice') || ''; } catch (e) { return ''; } } ;
+  const XI_DANIEL = 'onwK4e9ZLuTAKqWW03F9';                               // ElevenLabs premade British male voice: calm, formal, butler-like
+  let xiDown = false;
   const AI = '__ai', PRO = '__pro', VSV = '__vs';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
   const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
   const player = new Audio();
@@ -815,8 +820,9 @@ const voiceBox = (() => {
   };
   const aiOn = () => !!CHAT_URL && !aiDown && !!sel() && (sel().value === AI || sel().value === PRO);
   const vsOn = () => VS.configured() && !!sel() && sel().value === VSV;
+  const xiOn = () => !!xiKey() && !xiDown && !!sel() && sel().value === XIV;
   const isPro = () => !!sel() && sel().value === PRO && !proDown;
-  const cap = () => (vsOn() ? 900 : isPro() ? 300 : 600);
+  const cap = () => (xiOn() ? 380 : vsOn() ? 900 : isPro() ? 300 : 600);
   const stop = () => { token++; try { player.pause(); } catch (e) {} try { if (node) node.stop(); } catch (e) {} node = null; busyAI = false; };
   let actx = null, node = null;
   const getCtx = () => { if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (C) actx = new C(); } return actx; };
@@ -865,6 +871,30 @@ const voiceBox = (() => {
       onfail();
     }
   };
+  const speakXI = async (text, onstart, onend, onfail, quiet) => {
+    const my = ++token; busyAI = true;
+    try {
+      const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + (xiVoice() || XI_DANIEL) + '?output_format=mp3_44100_64', {
+        method: 'POST', headers: { 'xi-api-key': xiKey(), 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+        body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5', voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0.1, use_speaker_boost: true, speed: 0.97 } })
+      });
+      if (!r.ok) {
+        let m = ''; try { const d = await r.json(); m = (d.detail && (d.detail.message || d.detail)) || d.error || ''; } catch (e) {}
+        const err = new Error(typeof m === 'string' && m ? m : 'ElevenLabs error ' + r.status); err.status = r.status; throw err;
+      }
+      const blob = await r.blob();
+      if (!blob.size) throw new Error('empty audio');
+      if (my !== token) return;
+      await playBlob(blob, my, onend);
+      if (my === token) onstart();
+    } catch (e) {
+      if (my !== token) return;
+      busyAI = false;
+      if (e && (e.status === 401 || e.status === 402 || e.status === 429 || /quota|credit|limit/i.test(e.message))) xiDown = true;
+      toast('ElevenLabs voice failed (' + String(e && e.message || 'error').slice(0, 90) + '), using the device voice');
+      onfail(e);
+    }
+  };
   const speakVS = async (text, onstart, onend, onfail) => {
     const my = ++token; busyAI = true;
     try {
@@ -902,13 +932,17 @@ const voiceBox = (() => {
       const pr = document.createElement('option'); pr.value = PRO; pr.textContent = 'Jarvis premium voice (limited)';
       opts.unshift(f, pr);
     }
+    if (xiKey()) {
+      const x = document.createElement('option'); x.value = XIV; x.textContent = 'Jarvis ElevenLabs voice (British)';
+      opts.unshift(x);
+    }
     if (VS.configured()) {
       const v = document.createElement('option'); v.value = VSV; v.textContent = 'VoiceStudio (your PC)';
       opts.unshift(v);
     }
     sel().replaceChildren(...opts);
-    const ok = saved === VSV ? VS.configured() : (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
-    sel().value = ok ? saved : (CHAT_URL ? AI : voices.length ? voices[0].voiceURI : VSV);
+    const ok = saved === XIV ? !!xiKey() : saved === VSV ? VS.configured() : (saved === AI || saved === PRO) ? !!CHAT_URL : voices.some((v) => v.voiceURI === saved);
+    sel().value = ok ? saved : (xiKey() ? XIV : CHAT_URL ? AI : voices.length ? voices[0].voiceURI : VSV);
   };
   const current = () => voices.find((v) => sel() && v.voiceURI === sel().value) || null;
   const init = () => {
@@ -918,6 +952,7 @@ const voiceBox = (() => {
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
+      if (xiOn()) { speakXI('At your service.', () => {}, () => {}, () => {}); return; }
       if (vsOn()) { speakVS('At your service.', () => {}, () => {}, () => {}); return; }
       if (aiOn()) { speakAI('At your service.', () => {}, () => {}, () => {}); return; }
       const u = new SpeechSynthesisUtterance('At your service.');
@@ -926,7 +961,7 @@ const voiceBox = (() => {
       speechSynthesis.speak(u);
     });
   };
-  return { init, current, aiOn, vsOn, cap, speakAI, speakVS, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
+  return { init, current, aiOn, vsOn, xiOn, xiReset: () => { xiDown = false; }, cap, speakAI, speakVS, speakXI, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
 })();
 
 // Small on-screen voice log: a photo of it shows exactly how far a voice request got
@@ -937,6 +972,12 @@ function say(text) {
   const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
+  if (voiceBox.xiOn()) {
+    let t = clean.slice(0, voiceBox.cap());
+    if (clean.length > t.length) { const k = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (k > 80) t = t.slice(0, k + 1); }
+    voiceBox.speakXI(t, () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    return;
+  }
   if (voiceBox.vsOn()) {
     voiceBox.speakVS(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
     return;
@@ -2479,4 +2520,26 @@ fetch('graph.json', { cache: 'no-cache' })
   .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
   .then(init)
   .catch(() => { $('#stats').textContent = 'Could not load graph.json'; toast('Could not load graph.json'); });
+
+/* ---------- ElevenLabs key (stored only in this browser) ---------- */
+(() => {
+  const inp = document.getElementById('xiKey'), btn = document.getElementById('xiSave'), st = document.getElementById('xiStatus'), clr = document.getElementById('xiClear');
+  if (!inp) return;
+  const has = () => { try { return !!localStorage.getItem('brain.xi'); } catch (e) { return false; } };
+  const show = (m) => { st.textContent = m || (has() ? 'ElevenLabs key saved in this browser. Jarvis speaks with the British ElevenLabs voice.' : 'Paste your ElevenLabs API key for a more realistic Jarvis voice. It stays in this browser only.'); inp.value = ''; clr.hidden = !has(); };
+  btn.addEventListener('click', () => {
+    const k = inp.value.trim();
+    if (!/^[A-Za-z0-9_.\-]{20,}$/.test(k)) { toast('That does not look like a key. Copy the whole key with no spaces.'); return; }
+    voiceBox.unlock();
+    try { localStorage.setItem('brain.xi', k); } catch (e) { toast('This browser would not save the key.'); return; }
+    voiceBox.xiReset(); voiceBox.reload(); voiceBox.select('__xi'); show('Testing the voice…');
+    voiceBox.speakXI('At your service, sir.', () => show('Key works. Jarvis now uses the ElevenLabs voice.'), () => {}, (e) => {
+      if (e && (e.status === 401 || e.status === 403)) { try { localStorage.removeItem('brain.xi'); } catch (x) {} voiceBox.reload(); show('ElevenLabs refused this key: ' + e.message); }
+      else show('Key saved, but the test failed: ' + (e && e.message));
+    });
+  });
+  clr.addEventListener('click', () => { try { localStorage.removeItem('brain.xi'); } catch (e) {} voiceBox.reload(); show(); });
+  show();
+})();
+
 })();
