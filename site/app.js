@@ -2285,6 +2285,7 @@ const wake = (() => {
   const NOISE = /^(?:you|bye|thank you|thanks|thanks for watching|okay|ok|hmm+|um+|uh+|yeah|yes|no|oh|so|\.+)[ .!?]*$/i;
   let enabled = load(KEY_ON) === '1', phrase = load(KEY_PH) || DEFAULT, rec = null, running = false, lastWake = 0, fails = 0, timer = null, status = '';
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // Safari cannot keep the browser's speech recognition running, so it listens through the AI key
+  let keepStream = null;
   let srBroken = load('brain.srBroken') === '1' || (isIOS && wCapable0()), quick = 0, wst = null, wsent = [];                          // srBroken: this browser's built-in speech recognition does not work (common in Opera and Chromium builds)
   const wBusy = () => orb.get() !== 'idle' || voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending));
   const wCapable = () => !!(AI_READY() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
@@ -2350,7 +2351,8 @@ const wake = (() => {
     try {
       const id = load('brain.mic') || '';
       const opts = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-      try { st.stream = await gum(Object.assign(opts, id ? { deviceId: { exact: id } } : {})); }
+      if (keepStream && keepStream.getAudioTracks().some((t) => t.readyState === 'live')) { st.stream = keepStream; vlog('wake: reusing the open microphone'); }
+      else try { st.stream = await gum(Object.assign(opts, id ? { deviceId: { exact: id } } : {})); keepStream = st.stream; }
       catch (e) { if (e && e.message === 'TIMEOUT') throw e; st.stream = await gum({ audio: true }); }
     } catch (e) {
       try { st.ctx.close(); } catch (e2) {}
@@ -2405,13 +2407,14 @@ const wake = (() => {
       } catch (e) { vlog('wake: transcription failed: ' + String(e.message || e)); say3('Wake phrase: ' + String(e.message || e).slice(0, 140)); await sleep(5000); }
     }
     try { st.ctx.close(); } catch (e) {}
-    try { st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    if (!enabled) { try { st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {} if (keepStream === st.stream) keepStream = null; }   // keep it open between restarts so the browser does not ask again
     document.removeEventListener('pointerdown', resume);
     if (wst === st) wst = null;
   }
   function stopW() { if (wst) wst.stop = true; }
   async function release() {                                             // give the microphone back (iPad allows only one live capture at a time)
     stopRec();
+    if (keepStream) { try { keepStream.getTracks().forEach((t) => t.stop()); } catch (e) {} keepStream = null; }
     if (wst) { const st = wst; st.stop = true; try { if (st.stream) st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {} try { if (st.ctx) st.ctx.close(); } catch (e) {} await new Promise((r) => setTimeout(r, 250)); }
   }
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
