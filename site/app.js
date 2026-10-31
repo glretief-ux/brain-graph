@@ -828,7 +828,10 @@ const voiceBox = (() => {
   let xiDown = false;
   const KOV = '__ko';                                                    // Kokoro voice running on this device (free, no limits, same family as the PC Jarvis voice)
   const koVoice = () => { try { return localStorage.getItem('brain.koVoice') || 'bm_george'; } catch (e) { return 'bm_george'; } };
-  let koDown = false, koP = null;
+  let koDown = false, koP = null, koChecked = false;
+  const koIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
   const AI = '__ai', PRO = '__pro', VSV = '__vs';                       // AI = free MeloTTS (practically unlimited), PRO = Aura-2 (about 10 short answers a day on the free plan)
   const AI_SPEAKER = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.aiVoice) || 'draco';
   const player = new Audio();
@@ -900,13 +903,14 @@ const voiceBox = (() => {
     let last = 0;
     const cb = { progress_callback: (p) => { if (p && p.status === 'progress' && Date.now() - last > 1500) { last = Date.now(); vlog('voice download ' + Math.round(p.progress || 0) + '%'); } } };
     let t = null;
-    if (navigator.gpu) { try { t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'fp32', device: 'webgpu', ...cb }); vlog('voice: using the graphics chip'); } catch (e) { vlog('voice: graphics chip not usable (' + (e && e.message) + '), using the processor'); } }
+    if (navigator.gpu && !koIOS) { try { t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'fp32', device: 'webgpu', ...cb }); vlog('voice: using the graphics chip'); } catch (e) { vlog('voice: graphics chip not usable (' + (e && e.message) + '), using the processor'); } }
     if (!t) { t = await m.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', { dtype: 'q8', device: 'wasm', ...cb }); vlog('voice: using the processor (slower)'); }
     toast('Jarvis voice is ready.');
     return t;
   })().catch((e) => { koP = null; throw e; }));
   const speakKO = async (text, onstart, onend, onfail) => {
     const my = ++token; busyAI = true;
+    lsSet('brain.koBusy', '1');                                          // if Safari crashes while the voice is working, the next start sees this flag and drops the voice
     try {
       const tts = await koLoad();
       if (my !== token) return;
@@ -918,9 +922,12 @@ const voiceBox = (() => {
         if (my !== token) return;
         next = i + 1 < parts.length ? tts.generate(parts[i + 1], { voice: koVoice() }) : null;
         const blob = audio.toBlob(), lastPart = i === parts.length - 1;
+        if (i + 1 >= parts.length) lsSet('brain.koBusy', null);
         await new Promise((res, rej) => { playBlob(blob, my, lastPart ? () => { onend(); res(); } : res).then(() => { if (i === 0) onstart(); }).catch(rej); });
       }
+      lsSet('brain.koBusy', null);
     } catch (e) {
+      lsSet('brain.koBusy', null);
       if (my !== token) return;
       busyAI = false; koDown = true;
       toast('The on-device Jarvis voice could not start (' + (e && e.message ? e.message : 'error') + '), using another voice');
@@ -982,13 +989,18 @@ const voiceBox = (() => {
     voices = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang)).sort((a, b) => rate(b) - rate(a) || a.name.localeCompare(b.name));
     if (!voices.length && !CHAT_URL && !VS.configured()) return;
     let saved = ''; try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
+    if (!koChecked) {
+      koChecked = true;
+      if (lsGet('brain.koBusy') === '1') { lsSet('brain.koBusy', null); lsSet('brain.koBad', '1'); lsSet(KEY, CHAT_URL ? AI : ''); saved = CHAT_URL ? AI : ''; setTimeout(() => toast('The on-device voice made Safari restart, so I switched back to the free Jarvis voice.'), 1500); }
+    }
+    if (saved === KOV && (lsGet('brain.koBad') === '1' || (koIOS && lsGet('brain.koIOS') !== '2'))) saved = CHAT_URL ? AI : '';
     const opts = voices.map((v) => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; return o; });
     if (CHAT_URL) {
       const f = document.createElement('option'); f.value = AI; f.textContent = 'Jarvis voice (free, unlimited)';
       const pr = document.createElement('option'); pr.value = PRO; pr.textContent = 'Jarvis premium voice (limited)';
       opts.unshift(f, pr);
     }
-    { const k = document.createElement('option'); k.value = KOV; k.textContent = 'Jarvis Kokoro voice (on this device, free)'; opts.unshift(k); }
+    if (lsGet('brain.koBad') !== '1') { const k = document.createElement('option'); k.value = KOV; k.textContent = 'Jarvis Kokoro voice (on this device, free)'; opts.unshift(k); }
     if (xiKey()) {
       const x = document.createElement('option'); x.value = XIV; x.textContent = 'Jarvis ElevenLabs voice (British)';
       opts.unshift(x);
@@ -1009,7 +1021,7 @@ const voiceBox = (() => {
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
-      if (koOn()) { koDown = false; speakKO('At your service, sir.', () => {}, () => {}, () => {}); return; }
+      if (koOn()) { koDown = false; lsSet('brain.koIOS', '2'); speakKO('At your service, sir.', () => {}, () => {}, () => {}); return; }
       if (xiOn()) { speakXI('At your service.', () => {}, () => {}, () => {}); return; }
       if (vsOn()) { speakVS('At your service.', () => {}, () => {}, () => {}); return; }
       if (aiOn()) { speakAI('At your service.', () => {}, () => {}, () => {}); return; }
