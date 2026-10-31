@@ -16,6 +16,5 @@ What is still to do, by project. Items come from your requests; those marked (su
 ## Personal
 - [[Brain Graph]]: connect the chat (Cloudflare Worker and API key).
 - [[Stock Simulation]]: (suggested) decide whether to move to real trading.
-- [[Public Transport]]: (suggested) answer "next train" questions with the free iRail API.
 
 Back to [[Start Here]].

@@ -21,7 +21,9 @@ Public transport in and around Belgium, and how to plan a trip. Part of [[Everyd
 - Strikes are announced a few days ahead on the operators' sites and on the news; check before an important trip.
 - Prices and passes change often, so look them up on the operator site instead of trusting an old note.
 
-**Ideas for Jarvis**
-- "When is the next train from Ghent to Brussels?" could be answered with the free iRail API (irail.be), which has live Belgian train data. This is not built yet; see [[Open Items]].
+**Ask Jarvis**
+- "What is the next train to Antwerp?" gives the next three trains with platform, delay, arrival time and changes. It uses the free iRail API (irail.be) with live data from the Belgian railways.
+- Leaving point: Brussels-Central unless you say otherwise. "Next train from Ghent to Antwerp" changes it. Dutch names work too (Antwerpen, Gent).
+- Trains only for now. Metro, tram and bus are not included; use the operator apps. See [[Jarvis Services]].
 
 Related: [[Weather]] (snow and storms cause delays), [[Google Search]].

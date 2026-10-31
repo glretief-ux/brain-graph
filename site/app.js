@@ -1551,6 +1551,49 @@ const svc = (() => {
     if (rain != null && rain >= 50) out += ' Take an umbrella.';
     return out;
   }
+  // ---- Belgian trains (iRail open data, no key) ----
+  const TRAIN_ALIAS = { antwerpen: 'antwerp', gent: 'ghent', brussel: 'brussels', bruxelles: 'brussels', brugge: 'bruges', luik: 'liege', 'liège': 'liege', bergen: 'mons', mechelen: 'mechelen', leuven: 'leuven', oostende: 'ostend', kortrijk: 'kortrijk', namen: 'namur', 'zaventem': 'brussels-airport' };
+  const isTrain = (q) => /\b(?:trains?|sncb|nmbs|railway)\b/i.test(q) && /\bto\s+[a-z]/i.test(q);
+  let stationsP = null;
+  const stations = () => stationsP || (stationsP = fetch('https://api.irail.be/stations/?format=json&lang=en').then((r) => r.json()).then((d) => d.station || []).catch((e) => { stationsP = null; throw e; }));
+  async function findStation(name) {
+    let n = name.toLowerCase().trim().replace(/[.,!?]+$/, '').replace(/\b(?:station|railway|central|centraal)\b/g, '').trim();
+    n = n.split(/\s+/).map((w) => TRAIN_ALIAS[w] || w).join(' ');
+    if (n === 'brussels' || n === 'brussels airport') n = n === 'brussels' ? 'brussels-central' : 'brussels-airport';
+    const list = await stations();
+    const norm = (x) => String(x || '').toLowerCase().replace(/[-\s]+/g, ' ');
+    const key = norm(n);
+    const hits = list.filter((x) => norm(x.standardname).includes(key) || norm(x.name).includes(key));
+    if (!hits.length) return null;
+    hits.sort((a, b) => (/central|centraal|sint pieters/i.test(b.standardname) ? 1 : 0) - (/central|centraal|sint pieters/i.test(a.standardname) ? 1 : 0) || a.standardname.length - b.standardname.length);
+    return hits[0];
+  }
+  async function trains(q) {
+    const m = q.match(/\bfrom\s+([a-z' .-]+?)\s+to\s+([a-z' .-]+?)(?=\s+(?:at|tomorrow|today|please|now|this|in the)\b|[?.!,]|$)/i) ||
+      q.match(/\bto\s+([a-z' .-]+?)\s+from\s+([a-z' .-]+?)(?=\s+(?:at|tomorrow|today|please|now|this|in the)\b|[?.!,]|$)/i);
+    let from = 'Brussels-Central', to = '';
+    if (m) { if (/^\s*from/i.test(m[0])) { from = m[1]; to = m[2]; } else { to = m[1]; from = m[2]; } }
+    else { const t = q.match(/\bto\s+([a-z' .-]+?)(?=\s+(?:at|tomorrow|today|please|now|this|in the)\b|[?.!,]|$)/i); if (t) to = t[1]; }
+    if (!to) return 'Which station do you want to go to?';
+    let a, b;
+    try { [a, b] = await Promise.all([findStation(from), findStation(to)]); }
+    catch (e) { return 'I could not reach the train service just now.'; }
+    if (!b) return 'I do not know a station called ' + to.trim() + '.';
+    if (!a) return 'I do not know a station called ' + from.trim() + '.';
+    let d;
+    try {
+      const r = await fetch('https://api.irail.be/connections/?format=json&lang=en&results=3&from=' + encodeURIComponent(a.id) + '&to=' + encodeURIComponent(b.id));
+      if (!r.ok) throw new Error(r.status);
+      d = await r.json();
+    } catch (e) { return 'I could not get the train times just now.'; }
+    const hm = (t) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Brussels' }).format(new Date(t * 1000));
+    const list = (d.connection || []).slice(0, 3).map((c) => {
+      const dep = c.departure || {}, arr = c.arrival || {}, delay = Math.round(Number(dep.delay || 0) / 60), vias = Number((c.vias && c.vias.number) || 0);
+      return hm(dep.time) + (dep.platform && dep.platform !== '?' ? ' from platform ' + dep.platform : '') + (String(dep.canceled) === '1' ? ' (cancelled)' : delay > 0 ? ' (' + delay + ' min late)' : '') + ', arriving ' + hm(arr.time) + (vias ? ', ' + vias + (vias === 1 ? ' change' : ' changes') : ', direct');
+    });
+    if (!list.length) return 'I found no trains from ' + a.standardname.split('/')[0] + ' to ' + b.standardname.split('/')[0] + ' right now.';
+    return 'Next trains from ' + a.standardname.split('/')[0] + ' to ' + b.standardname.split('/')[0] + ':\n' + list.join('\n') + (m ? '' : '\n(I assumed you leave from Brussels-Central. Say "from Ghent to Antwerp" to change that.)');
+  }
   // ---- date and time ----
   const isTime = (q) => /\b(?:what(?:'s| is) (?:the )?(?:time|date|day)|what time is it|what day is it|today'?s date|what is today|current time|time now)\b/i.test(q);
   async function time(q) {
@@ -1828,6 +1871,7 @@ const svc = (() => {
     { match: isTimerCmd, run: timerAdd },
     { match: isSetHome, run: setHome },
     { match: isWeather, run: weather },
+    { match: isTrain, run: trains },
     { match: isTime, run: time },
     { match: (q) => !!parseConvert(q), run: convert },
     { match: isMarket, run: markets },
