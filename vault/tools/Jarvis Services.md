@@ -10,3 +10,5 @@ Quick answers inside [[Brain Graph]] that need no AI key and no account. They ru
 - **News:** "what is the news", "drug seizure news". A scheduled GitHub job refreshes site/news.json every three hours; sources are listed in scripts/news_feeds.json. Related: [[Seizure Watch]].
 
 New services are one entry each in the SERVICES list in site/app.js.
+
+Everyday notes for these: [[Everyday Life]].
