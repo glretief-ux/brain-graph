@@ -660,7 +660,19 @@ async function brainFetch(body) {
         }
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1000) });
-        let answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
+        let answer;
+        if (OL.on() && OL.ready()) {                                    // small local models: strict prompt, notes next to the question, best match first, little history
+          const q = String(body.question).slice(0, 1000), ql = q.toLowerCase();
+          const all = (body.notes || []).slice();
+          const named = all.filter((n) => n.title && ql.includes(String(n.title).toLowerCase()));
+          const rest = all.filter((n) => !named.includes(n));
+          const picked = [...named, ...rest].slice(0, 6);
+          const lctx = picked.map((n, i) => '### ' + String(n.title).slice(0, 120) + '\n' + String(n.text).slice(0, i === 0 && named.length ? 1800 : 900)).join('\n\n');
+          const follow = /\b(?:it|its|that|this|they|them|those|these|more|else|also)\b/i.test(q) && q.split(/\s+/).length < 9;
+          const lhist = follow ? msgs.slice(0, -1).slice(-2) : [];
+          const lsys = 'You are J.A.R.V.I.S., a concise assistant for the user\'s notes. Answer ONLY from the NOTES in the message. If they do not contain the answer, say "I do not have a note on that." Reply in one to four short sentences. When you mention a note, write its exact title in double square brackets like [[Seizure Watch]]. Never apologise and never mention mistakes.';
+          answer = await groqChatDirect([{ role: 'system', content: lsys }, ...lhist, { role: 'user', content: 'NOTES:\n\n' + lctx + '\n\nQUESTION: ' + q }], 500);
+        } else answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
         if (body.live && brainFetch.lastErr && GKEY()) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
         return fakeRes({ answer, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
