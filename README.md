@@ -58,6 +58,17 @@ If the PC is off or VoiceStudio is closed, Jarvis switches to the free Jarvis vo
 
 Notes: a plain `http://` address other than localhost is blocked by browsers on an https page; for other devices use an https address (for example Tailscale Serve) and set an API key (`OMNIVOICE_API_KEY`) which you enter in the same box. Never expose VoiceStudio to the open internet. VoiceStudio is AGPL-3.0: this repo only calls its API and contains none of its code. Clone voices only with permission.
 
+## Optional: Ollama (free offline AI on your own PC)
+
+Jarvis can answer with a model running on your PC through [Ollama](https://ollama.com), so nothing leaves the computer and there is no key or limit.
+
+1. Install Ollama and pull a model that fits your GPU (8 GB VRAM: about 7-9B models, for example `ollama pull llama3.1:8b`).
+2. Allow this site: set the environment variable `OLLAMA_ORIGINS` to `https://glretief-ux.github.io` and restart Ollama (on Windows: Settings, search "environment variables", add it, then quit and reopen Ollama).
+3. Open the panel, find **Ollama**, press **Save and test**, and allow the browser prompt for local network access.
+4. Say or type **"switch to <model name>"** (for example "switch to llama 3.1") to change model, **"switch to the cloud"** to use Groq/Gemini, and **"switch to local"** to come back.
+
+If Ollama is off or unreachable (for example on the iPad, where `localhost` is the iPad itself), Jarvis falls back to the cloud key or the Worker automatically. Live web questions still use the cloud, because a local model cannot browse.
+
 ## Services (weather, time, timers, news, conversions)
 Jarvis answers these directly, with no AI key and no account:
 - **Weather:** "What is the weather today?", "weather tomorrow", "will it rain in Ghent tomorrow?" (Open-Meteo). Say **"my city is Brussels"** once so it knows where you are (stored in your browser only).

@@ -495,7 +495,55 @@ const orb = (() => {
 const CHAT_URL = (window.BRAIN_CONFIG && window.BRAIN_CONFIG.chatUrl) || '';
 /* ---------- Groq straight from this browser (your free key stays in this browser only) ---------- */
 const GKEY = () => { try { return localStorage.getItem('brain.groq') || ''; } catch (e) { return ''; } };
-const AI_READY = () => !!(CHAT_URL || GKEY());
+/* ---------- Ollama: free local AI on your own PC (answers never leave the computer) ----------
+   Settings live in this browser only. Needs Ollama running with OLLAMA_ORIGINS including this site.
+   If Ollama is off or unreachable (for example on the iPad), Jarvis falls back to the cloud key or the Worker. */
+const OL = (() => {
+  const get = (k) => { try { return localStorage.getItem('brain.ol' + k) || ''; } catch (e) { return ''; } };
+  const set = (k, v) => { try { if (v) localStorage.setItem('brain.ol' + k, v); else localStorage.removeItem('brain.ol' + k); } catch (e) {} };
+  const base = () => (get('Url') || 'http://localhost:11434').trim().replace(/\/+$/, '');
+  const on = () => get('On') === '1' && !!get('Model');
+  let downUntil = 0;
+  const ready = () => Date.now() > downUntil;
+  const fail = () => { downUntil = Date.now() + 20000; };                  // skip Ollama for 20 s after a failure so answers do not wait
+  const timed = async (url, opts, ms) => {
+    const ac = new AbortController(); const t = setTimeout(() => ac.abort(), ms);
+    try { return await fetch(url, { ...opts, signal: ac.signal }); } finally { clearTimeout(t); }
+  };
+  async function tags() {
+    const r = await timed(base() + '/api/tags', {}, 4000);
+    if (!r.ok) throw new Error('Ollama answered ' + r.status);
+    const d = await r.json().catch(() => ({}));
+    return ((d && d.models) || []).map((m) => m.name).filter((n) => !/embed/i.test(n));
+  }
+  async function chat(messages, max_tokens) {
+    const r = await timed(base() + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: get('Model'), messages, stream: false, keep_alive: '30m', options: { temperature: 0.3, num_predict: Math.max(max_tokens || 500, 400) } }) }, 60000);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Ollama: ' + (d.error || 'error ' + r.status));
+    return String((d.message && d.message.content) || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  }
+  // "Jarvis, switch to Gemma 4 12 billion" / "switch to the cloud" / "switch to local"
+  const squash = (s) => String(s).toLowerCase().replace(/(\d+(?:\.\d+)?)\s*(?:billion|b)\b/g, '$1b').replace(/[^a-z0-9]/g, '');
+  async function command(q) {
+    const m = q.match(/^\s*(?:(?:hey\s+)?jarvis[,.\s]+)?(?:please\s+)?(?:switch|change|swap|go)\s+(?:back\s+)?to\s+(?:the\s+|my\s+)?(?:model\s+)?(.+?)[\s.!?]*$/i);
+    if (!m) return '';
+    const want = m[1];
+    if (/^(?:cloud|groq|gemini|online)\b/i.test(want)) { set('On', ''); return 'Switched to the cloud AI.'; }
+    if (/^(?:local|ollama|offline|this pc|the pc)\b/i.test(want)) {
+      if (!get('Model')) return 'Ollama is not set up yet. Open the panel and use Save and test under Ollama.';
+      set('On', '1'); downUntil = 0; return 'Switched to the local AI, ' + get('Model') + '.';
+    }
+    if (!get('Url') && !get('Model')) return '';
+    let names; try { names = await tags(); } catch (e) { return /model|gemma|llama|qwen|mistral|phi|deepseek/i.test(q) ? 'I could not reach Ollama on this computer.' : ''; }
+    const k = squash(want); if (!k) return '';
+    const hit = names.filter((n) => squash(n).includes(k)).sort((a, b) => a.length - b.length)[0];
+    if (!hit) return /model/i.test(q) || names.some((n) => squash(n).startsWith(k.slice(0, 4))) ? 'I do not have that model installed. I have ' + names.slice(0, 4).join(', ') + '.' : '';
+    set('Model', hit); set('On', '1'); downUntil = 0;
+    return 'Switched to ' + hit + '.';
+  }
+  return { get, set, base, on, ready, fail, tags, chat, command, model: () => get('Model') };
+})();
+const AI_READY = () => !!(CHAT_URL || GKEY() || OL.on());
 const BRAIN_SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's personal knowledge base (their "second brain").
 Answer using the notes provided below (they may include live calendar, Gmail and web results). If they do not contain the answer, say so briefly.
 Be concise: one to four short sentences, or a short list. Plain language, no preamble.
@@ -548,6 +596,11 @@ async function gemGenerate(payload, fast) {                              // fast
   return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
 }
 async function groqChatDirect(messages, max_tokens) {
+  if (OL.on() && OL.ready()) {                                            // local first
+    try { const t = await OL.chat(messages, max_tokens); if (t) { groqChatDirect.via = 'ollama'; return t; } throw new Error('Ollama gave an empty answer'); }
+    catch (e) { OL.fail(); const why = (e.name === 'AbortError' ? 'Ollama took too long' : e.message === 'Failed to fetch' ? 'Ollama is not reachable' : e.message); if (!GKEY()) throw new Error(why); }
+  } else if (OL.on() && !GKEY()) throw new Error('Ollama is not reachable');
+  groqChatDirect.via = 'cloud';
   if (IS_GEM()) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -569,10 +622,10 @@ async function groqChatDirect(messages, max_tokens) {
 const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () => obj });
 // Same job as the Worker's text modes, but done here when a Groq key is saved. Falls back to the Worker.
 async function brainFetch(body) {
-  if (GKEY()) {
+  if (GKEY() || (OL.on() && !body.search)) {
     try {
       brainFetch.lastErr = '';
-      if (body.question && body.live) {                                  // needs current facts: let the AI search the web itself
+      if (body.question && body.live && GKEY()) {                                 // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
         const sysLive = 'You are J.A.R.V.I.S., a voice assistant. Today is ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.';
         const hist = (body.history || []).slice(-4).filter((m) => m && m.content);
@@ -608,8 +661,8 @@ async function brainFetch(body) {
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1000) });
         let answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
-        if (body.live && brainFetch.lastErr) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
-        return fakeRes({ answer });
+        if (body.live && brainFetch.lastErr && GKEY()) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
+        return fakeRes({ answer, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
       if (body.compose) {
         const sys = 'You write email drafts for the user. Reply with ONLY a JSON object: {"to":"","subject":"","body":""}.\n"to" must be ONE email address: copy it from the CONTACTS list when a name in the request matches a contact, or use an address the request spells out. If nothing matches, leave "to" empty. Never invent an address.\nWrite the email in the same language as the request unless asked otherwise. Short, polite and natural, in the first person as the user, with a greeting and a closing line. No placeholders like [Your name] and no text outside the JSON.\n\nCONTACTS:\n' + ((body.contacts || []).slice(0, 60).join('\n') || '(none)');
@@ -2001,6 +2054,7 @@ async function tour() {
 
 async function ask(question) {
   if (chat.busy || !question) return;
+  { const sw = await OL.command(question); if (sw) { renderAnswer(sw); orb.set('idle'); say(sw); return; } }   // "switch to <model>"
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
   if (svc.match(question)) { await svc.handle(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
@@ -2040,6 +2094,7 @@ async function ask(question) {
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
     chat.history = chat.history.slice(-6);
     renderAnswer(data.answer);
+    if (OL.on()) box.append(el('div', 'muted', data.via === 'ollama' ? 'Answered on this PC by ' + data.model + '.' : 'Answered by the cloud AI (Ollama was not available).'));
     orb.set('idle');
     say(data.answer);
   } catch (e) {
@@ -2478,6 +2533,44 @@ const wake = (() => {
   });
   clr.addEventListener('click', () => { try { localStorage.removeItem('brain.groq'); } catch (e) {} groqModel = ''; gemModel = ''; gemFast = ''; show(); });
   show();
+})();
+
+/* ---------- Ollama settings (stored only in this browser) ---------- */
+(() => {
+  const url = $('#olUrl'), pick = $('#olPick'), save = $('#olSave'), clr = $('#olClear'), st = $('#olStatus');
+  if (!url) return;
+  url.value = OL.get('Url');
+  const show = (m) => {
+    st.textContent = m || (OL.on() ? 'Ollama is on: Jarvis answers on this PC with ' + OL.model() + '. If it is off, Jarvis uses the cloud.' : 'Run Ollama on this PC, set OLLAMA_ORIGINS to https://glretief-ux.github.io, then Save and test.');
+    clr.hidden = !OL.on();
+  };
+  const fill = (names) => {
+    pick.replaceChildren(...names.map((n) => { const o = document.createElement('option'); o.value = n; o.textContent = n; return o; }));
+    pick.hidden = !names.length;
+    if (names.includes(OL.model())) pick.value = OL.model();
+  };
+  const why = (e) => e.name === 'AbortError' || e.message === 'Failed to fetch'
+    ? 'Cannot connect. Is Ollama running? Set OLLAMA_ORIGINS to https://glretief-ux.github.io, restart Ollama, and allow the browser prompt for local network access.'
+    : e.message;
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const u = url.value.trim(); OL.set('Url', u && u !== 'http://localhost:11434' ? u : '');
+      const names = await OL.tags();
+      if (!names.length) throw new Error('Ollama is running but has no models. Run: ollama pull llama3.1:8b');
+      fill(names);
+      if (!names.includes(pick.value)) pick.value = names[0];
+      OL.set('Model', pick.value); OL.set('On', '1');
+      show('Connected. Testing ' + pick.value + '...');
+      const t = await OL.chat([{ role: 'user', content: 'Reply with the single word: ready' }], 20);
+      toast('Ollama works. Jarvis now answers on this PC.'); show(t ? undefined : 'Connected, but the model gave no reply. Try another model.');
+    } catch (e) { show(why(e)); }
+    save.disabled = false;
+  });
+  pick.addEventListener('change', () => { OL.set('Model', pick.value); show(); toast('Model: ' + pick.value); });
+  clr.addEventListener('click', () => { OL.set('On', ''); show('Ollama is off. Jarvis uses the cloud.'); clr.hidden = true; });
+  if (OL.get('On') === '1') OL.tags().then((n) => { fill(n); show(); }).catch(() => show());
+  else show();
 })();
 
 /* ---------- VoiceStudio settings (stored only in this browser) ---------- */
