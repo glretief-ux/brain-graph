@@ -51,6 +51,13 @@
       <p id="gkStatus" class="voice"></p>
     </div>
     <div class="gkbox">
+      <div class="clabel2">Ollama (free AI on your own PC, offline)</div>
+      <input id="olUrl" type="url" placeholder="http://localhost:11434" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="olPick" aria-label="Ollama model" hidden></select>
+      <div class="grow"><button type="button" id="olSave" class="gbtn">Save and test</button><button type="button" id="olClear" class="gbtn" hidden>Turn off</button></div>
+      <p id="olStatus" class="voice"></p>
+    </div>
+    <div class="gkbox">
       <div class="clabel2">ElevenLabs key (optional, realistic British Jarvis voice)</div>
       <input id="xiKey" type="password" placeholder="ElevenLabs API key (sk_...)" autocomplete="off" autocapitalize="off" spellcheck="false">
       <div class="grow"><button type="button" id="xiSave" class="gbtn">Save key</button><button type="button" id="xiClear" class="gbtn" hidden>Remove</button></div>
