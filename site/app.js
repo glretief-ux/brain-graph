@@ -551,20 +551,21 @@ Whenever you mention a note from the knowledge base, write its exact title in do
 Never invent details that are not in the notes.`;
 let groqModel = '';
 async function groqPickModel() {
-  const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } });
+  const r = await fetchT('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } }, 8000);
   const d = await r.json().catch(() => ({}));
   const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
   return ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'].find((m) => ids.includes(m)) || ids[0] || '';
 }
 const IS_GEM = () => !!GKEY() && !/^gsk_/.test(GKEY());
 let gemModel = '';
+const fetchT = (url, opts, ms) => { const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms); return fetch(url, { ...(opts || {}), signal: ac.signal }).catch((e) => { throw new Error(e && e.name === 'AbortError' ? 'the service did not answer in ' + Math.round(ms / 1000) + 's' : e.message); }).finally(() => clearTimeout(t)); };
 async function gemCall(model, payload) {
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 15000);
   const d = await r.json().catch(() => ({}));
   return { r, d };
 }
 async function gemPick(fast) {
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(GKEY()));
+  const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(GKEY()), {}, 8000);
   const d = await r.json().catch(() => ({}));
   const ids = ((d && d.models) || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name).replace('models/', ''));
   const ver = (id) => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]);
@@ -582,7 +583,7 @@ async function gemGenerate(payload, fast) {                              // fast
   if (r.ok) { if (fast) gemFast = first; }
   else if (GEM_GONE.test((d.error && d.error.message) || '')) {
     const tried = [first];
-    for (const alt of (await gemPick(fast)).slice(0, 12)) {
+    for (const alt of (await gemPick(fast)).slice(0, 4)) {
       if (tried.includes(alt)) continue;
       tried.push(alt);
       ({ r, d } = await gemCall(alt, payload));
@@ -606,10 +607,10 @@ async function groqChatDirect(messages, max_tokens) {
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
     return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 2048), temperature: 0.3 } });
   }
-  const call = (model) => fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const call = (model) => fetchT('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 })
-  });
+  }, 15000);
   let r = await call(groqModel || 'llama-3.1-8b-instant');
   let d = await r.json().catch(() => ({}));
   if (!r.ok && /model/i.test((d.error && d.error.message) || '')) {
@@ -703,7 +704,7 @@ async function brainFetch(body) {
     }
   }
   if (!CHAT_URL) return fakeRes({ error: 'Add a free AI key in the panel (Free AI key), or set up the Worker.' }, false, 400);
-  const r = await fetch(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 28000);
   if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
   return r;
 }
@@ -1661,7 +1662,7 @@ const svc = (() => {
   // ---- weather ----
   const WMO = { 0: 'clear sky', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'foggy', 48: 'foggy', 51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle', 56: 'freezing drizzle', 57: 'freezing drizzle', 61: 'light rain', 63: 'rain', 65: 'heavy rain', 66: 'freezing rain', 67: 'freezing rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow', 77: 'snow grains', 80: 'light showers', 81: 'showers', 82: 'heavy showers', 85: 'snow showers', 86: 'heavy snow showers', 95: 'thunderstorms', 96: 'thunderstorms with hail', 99: 'thunderstorms with hail' };
   const wmo = (c) => WMO[c] || 'mixed weather';
-  const isWeather = (q) => /\b(?:weather|forecast|temperature|umbrella|raining|snowing|will it (?:rain|snow)|is it (?:raining|snowing|cold|hot|warm|sunny)|how (?:hot|cold|warm) is it)\b/i.test(q) && !/\b(?:write|draft|compose|email|e-mail|mail)\b/i.test(q);
+  const isWeather = (q) => /\b(?:weather|forecast|temperature|umbrella|raining|snowing|(?:will|would|is|are|does|do|gonna|going to)\b[^.?!]{0,25}\b(?:rain|snow|storm|shower)\w*|(?:rain|snow|storm)\w*\s+(?:today|tonight|tomorrow|later|this)|is it (?:raining|snowing|cold|hot|warm|sunny|windy|going to (?:rain|snow))|chance of (?:rain|snow)|how (?:hot|cold|warm) is it)\b/i.test(q) && !/\b(?:write|draft|compose|email|e-mail|mail)\b/i.test(q);
   const isSetHome = (q) => /\b(?:my (?:home )?(?:city|town|location) is|i live in|set my (?:home )?(?:city|town|location) to|change my (?:home )?(?:city|town|location) to)\s+\S/i.test(q);
   async function setHome(q) {
     const m = q.match(new RegExp("(?:my (?:home )?(?:city|town|location) is|i live in|set my (?:home )?(?:city|town|location) to|change my (?:home )?(?:city|town|location) to)\\s+" + cityRe + "\\s*[.!?]*$", 'i'));
@@ -2099,7 +2100,7 @@ async function ask(question) {
       } catch (e) { /* answer without it */ }
     }
     const tA = Date.now();
-    const r = await Promise.race([brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 45000))]);
+    const r = await Promise.race([brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error((brainFetch.lastErr ? brainFetch.lastErr + '. ' : '') + 'The AI did not answer in time. Try again in a moment.')), 50000))]);
     const data = await r.json().catch(() => ({}));
     vlog('answer: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');

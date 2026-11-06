@@ -35,11 +35,13 @@ async function groqPick(env) {
   const prefer = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
   return prefer.find((m) => ids.includes(m)) || ids[0] || null;
 }
+const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label + " took too long")), ms))]);
 async function groqChat(env, messages, max_tokens) {
   const call = (model) => fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: "Bearer " + env.GROQ_API_KEY },
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 }),
+    signal: AbortSignal.timeout(12000),
   });
   let model = env.GROQ_MODEL || groqPicked || "llama-3.1-8b-instant";
   let r = await call(model);
@@ -52,7 +54,7 @@ async function groqChat(env, messages, max_tokens) {
   return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").trim();
 }
 async function cfChat(env, messages, max_tokens) {
-  const out = await env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", { messages, max_tokens });
+  const out = await withTimeout(env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", { messages, max_tokens }), 20000, "Workers AI");
   return String((out && (out.response || out.result)) || "").trim();
 }
 // Free chat: Groq first, Workers AI as backup (or the reverse if only one is set up)
