@@ -544,11 +544,18 @@ const OL = (() => {
   return { get, set, base, on, ready, fail, tags, chat, command, model: () => get('Model') };
 })();
 const AI_READY = () => !!(CHAT_URL || GKEY() || OL.on());
-const BRAIN_SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's personal knowledge base (their "second brain").
-Answer using the notes provided below (they may include live calendar, Gmail and web results). If they do not contain the answer, say so briefly.
-Be concise: one to four short sentences, or a short list. Plain language, no preamble.
-Whenever you mention a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
-Never invent details that are not in the notes.`;
+const brainSystem = () => `You are J.A.R.V.I.S., the user's personal assistant, working from their "second brain" of notes. It is now ${new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' })}.
+The NOTES below are the user's own knowledge base. They may also hold live calendar, Gmail and web results, and things the user asked you to remember.
+- For anything about the user, their projects, plans, files, people or schedule, rely on the notes. Never invent personal details.
+- Think before you answer: combine facts from several notes, compare, count, and work out dates, deadlines or next steps from today's date when that answers the question.
+- If the notes do not cover it and it is general knowledge, answer from what you know and say in a few words that it is not from the notes. If it is personal and missing, say so briefly and name the note where it belongs.
+- Use the earlier turns of the conversation to understand short follow-up questions.
+- Match the length to the question. Normally one to four short sentences, because answers are read aloud. Give a longer answer or a short list only when asked to explain, list, compare, plan or advise.
+- Lead with the answer. Plain language, no preamble, no headings or tables.
+- When you use a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
+- If the question could mean two things, answer the likelier one and ask one short question to check.`;
+// How much note text (characters) the AI in use can read per question: Gemini takes the whole vault, Groq's free plan and the Worker less
+const contextBudget = () => (IS_GEM() ? 60000 : OL.on() && OL.ready() && !GKEY() ? 9000 : 11000);
 let groqModel = '';
 async function groqPickModel() {
   const r = await fetchT('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } }, 8000);
@@ -607,18 +614,43 @@ async function groqChatDirect(messages, max_tokens) {
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
     return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 2048), temperature: 0.3 } });
   }
-  const call = (model) => fetchT('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
-    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 })
-  }, 15000);
-  let r = await call(groqModel || 'llama-3.1-8b-instant');
-  let d = await r.json().catch(() => ({}));
-  if (!r.ok && /model/i.test((d.error && d.error.message) || '')) {
-    const alt = await groqPickModel();
-    if (alt) { groqModel = alt; r = await call(alt); d = await r.json().catch(() => ({})); }
+  const t0 = Date.now(); let lastErr = 'no model available';
+  for (const model of (await groqRank()).slice(0, 3)) {
+    if (Date.now() - t0 > 24000) break;
+    const payload = { model, messages, max_tokens, temperature: 0.3 };
+    if (/gpt-oss/.test(model)) { payload.reasoning_effort = 'low'; payload.max_tokens = max_tokens + 700; }   // thinking models spend part of the allowance on thinking
+    try {
+      const r = await fetchT('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify(payload) }, 15000);
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const t = String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        if (t) { groqModel = model; return t; }
+        lastErr = model + ' gave an empty answer'; continue;
+      }
+      lastErr = (d.error && d.error.message) || 'error ' + r.status;
+      if (r.status === 401) break;                                        // wrong key: no point trying other models
+    } catch (e) { lastErr = e.message; }
   }
-  if (!r.ok) throw new Error('Groq: ' + ((d.error && d.error.message) || 'error ' + r.status));
-  return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
+  throw new Error('Groq: ' + lastErr);
+}
+// The Groq chat models this key can use, smartest first (the list changes over time, so it is read from Groq)
+const GROQ_PREF = [/llama-3\.3-70b/, /gpt-oss-120b/, /kimi-k2/, /llama-4.*maverick/, /qwen/, /llama-4/, /70b/, /gpt-oss-20b/, /llama-3\.1-8b/];
+function groqOrder(ids) {
+  const ok = ids.filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard|compound|allam/i.test(id));
+  const out = [];
+  for (const re of GROQ_PREF) for (const id of ok) if (re.test(id) && !out.includes(id)) out.push(id);
+  for (const id of ok) if (!out.includes(id)) out.push(id);
+  return out;
+}
+async function groqRank() {
+  if (groqRank.list && groqRank.key === GKEY()) return groqRank.list;
+  try {
+    const r = await fetchT('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } }, 6000);
+    const d = await r.json().catch(() => ({}));
+    const list = groqOrder(((d && d.data) || []).map((m) => m.id));
+    if (list.length) { groqRank.list = list; groqRank.key = GKEY(); return list; }
+  } catch (e) { /* use the usual names */ }
+  return ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
 }
 const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () => obj });
 // Same job as the Worker's text modes, but done here when a Groq key is saved. Falls back to the Worker.
@@ -628,7 +660,8 @@ async function brainFetch(body) {
       brainFetch.lastErr = '';
       if (body.question && body.live && GKEY()) {                                 // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
-        const sysLive = 'You are J.A.R.V.I.S., a voice assistant. Today is ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.';
+        const own = (body.notes || []).filter((n) => n && n.type !== 'web').slice(0, 5).map((n) => '## ' + String(n.title).slice(0, 120) + '\n' + String(n.text).slice(0, 900)).join('\n\n').slice(0, 3500);
+        const sysLive = 'You are J.A.R.V.I.S., the user\'s personal assistant. It is now ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.' + (own ? '\nThe user\'s own notes follow. Use them when the question touches the user\'s projects or plans, and write a note\'s exact title in double square brackets when you use it.\n\n' + own : '');
         const hist = (body.history || []).slice(-4).filter((m) => m && m.content);
         if (IS_GEM()) {
           try {
@@ -644,7 +677,7 @@ async function brainFetch(body) {
         } else {
           for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
             try {
-              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 500, messages: [{ role: 'system', content: sysLive }, { role: 'user', content: String(body.question).slice(0, 800) }] }) });
+              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 500, messages: [{ role: 'system', content: sysLive }, ...hist.filter((m, i, a) => (m.role === 'user' || m.role === 'assistant') && (i > 0 || m.role === 'user')).map((m) => ({ role: m.role, content: String(m.content).slice(0, 600) })), { role: 'user', content: String(body.question).slice(0, 800) }] }) });
               const d = await r.json().catch(() => ({}));
               const t = r.ok && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
               if (t) return fakeRes({ answer: String(t).trim() });
@@ -653,11 +686,11 @@ async function brainFetch(body) {
         }
       }
       if (body.question) {
-        const ctx = (body.notes || []).slice(0, 9).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 1000)).join('\n\n');
+        const ctx = (body.notes || []).slice(0, 60).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 6000)).join('\n\n').slice(0, contextBudget() + 6000);
         const msgs = [];
-        for (const m of (body.history || []).slice(-6)) {
+        for (const m of (body.history || []).slice(-8)) {
           const exp = msgs.length % 2 === 0 ? 'user' : 'assistant';
-          if (m && m.role === exp && m.content) msgs.push({ role: m.role, content: String(m.content).slice(0, 1200) });
+          if (m && m.role === exp && m.content) msgs.push({ role: m.role, content: String(m.content).slice(0, IS_GEM() ? 1500 : 700) });
         }
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1000) });
@@ -673,7 +706,7 @@ async function brainFetch(body) {
           const lhist = follow ? msgs.slice(0, -1).slice(-2) : [];
           const lsys = 'You are J.A.R.V.I.S., a concise assistant for the user\'s notes. Answer ONLY from the NOTES in the message. If they do not contain the answer, say "I do not have a note on that." Reply in one to four short sentences. When you mention a note, write its exact title in double square brackets like [[Seizure Watch]]. Never apologise and never mention mistakes.';
           answer = await groqChatDirect([{ role: 'system', content: lsys }, ...lhist, { role: 'user', content: 'NOTES:\n\n' + lctx + '\n\nQUESTION: ' + q }], 500);
-        } else answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
+        } else answer = await groqChatDirect([{ role: 'system', content: brainSystem() + '\n\nNOTES:\n\n' + ctx }, ...msgs], 900);
         if (body.live && brainFetch.lastErr && GKEY()) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
         return fakeRes({ answer, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
@@ -798,25 +831,60 @@ const BOOSTS = [
   { re: /to.?do|left|remaining|still|pending|next|outstanding|open/i, title: 'open items' },
   { re: /rule|lesson|tip|gotcha|mistake|learn/i, title: 'lessons learned' }
 ];
-function scoreNotes(question) {
-  const words = question.toLowerCase().match(/[a-z0-9À-ɏ]{3,}/g) || [];
-  const terms = words.filter((w) => !STOP.has(w));
-  for (const c of question.match(/\d{2,7}-\d{2}-\d/g) || []) terms.push(c);
-  const pairs = []; for (let i = 0; i + 1 < words.length; i++) if (!STOP.has(words[i]) && !STOP.has(words[i + 1])) pairs.push(words[i] + ' ' + words[i + 1]);
-  return NOTES.map((n) => {
-    const title = n.title.toLowerCase(), text = n.text.toLowerCase();
-    let s = 0;
-    for (const pr of pairs) { let at = text.indexOf(pr), c = 0; while (at !== -1 && c < 3) { s += 8; c++; at = text.indexOf(pr, at + pr.length); } }
-    for (const t of terms) {
-      if (title.includes(t)) s += 5;
-      let at = text.indexOf(t), c = 0;
-      while (at !== -1 && c < 5) { s += 1; c++; at = text.indexOf(t, at + t.length); }
+// Words people say that the notes spell differently
+const SYNONYMS = { todo: ['open', 'items'], todos: ['open', 'items'], task: ['open', 'items'], tasks: ['open', 'items'], repo: ['github', 'repository'], repos: ['github', 'repository'], repository: ['github', 'repo'], wood: ['timber'], timber: ['wood'], drug: ['narcotic', 'cocaine'], drugs: ['narcotic', 'cocaine'], email: ['gmail', 'mail'], training: ['course'], course: ['training'], video: ['youtube'], videos: ['youtube'], shares: ['stock'], whiskey: ['whisky'] };
+const stem = (w) => { if (w.length > 4 && !/^\d/.test(w)) { if (/ies$/.test(w)) return w.slice(0, -3) + 'y'; if (/s$/.test(w) && !/(?:ss|us|is)$/.test(w)) return w.slice(0, -1); } return w; };
+const tokens = (s) => (String(s || '').toLowerCase().match(/\d{2,7}-\d{2}-\d|[a-z0-9À-ɏ]{2,}/g) || []).filter((w) => (w.length > 2 || /^\d+$/.test(w)) && !STOP.has(w)).map(stem);
+let IDX = null;
+function buildIndex(notes) {
+  const docs = notes.map((n) => {
+    const tk = tokens(n.text), tf = new Map();
+    for (const t of tk) tf.set(t, (tf.get(t) || 0) + 1);
+    return { tf, len: tk.length || 1, title: new Set(tokens(n.title)), low: String(n.title).toLowerCase(), text: String(n.text).toLowerCase() };
+  });
+  const df = new Map();
+  for (const d of docs) for (const t of new Set([...d.tf.keys(), ...d.title])) df.set(t, (df.get(t) || 0) + 1);
+  return { notes, docs, df, avg: docs.reduce((a, d) => a + d.len, 0) / (docs.length || 1) };
+}
+// A short question that leans on the one before it ("and when is it due?", "tell me more")
+function isFollowUp(question, qt) {
+  const q = String(question), n = q.trim().split(/\s+/).length;
+  return (qt || tokens(q)).length <= 1 || /^\s*(?:and|but|so|what about|how about|why|which one|tell me more|go on|more)\b/i.test(q) || (n < 10 && /\b(?:it|its|that|this|they|them|those|these|he|she|him|her|one|ones|same|again|else|also)\b/i.test(q));
+}
+// Rank every note for a question: rare words count more than common ones, long notes do not win just by being long,
+// a note named in the question comes first, and a follow-up question borrows the words of the question before it.
+function rankNotes(question, ctx) {
+  ctx = ctx || {};
+  if (!IDX || IDX.notes !== NOTES) IDX = buildIndex(NOTES);
+  const { docs, df, avg } = IDX, N = docs.length || 1;
+  const ql = String(question).toLowerCase(), qt = tokens(question);
+  const weights = new Map();
+  const add = (t, w) => { if (t && (weights.get(t) || 0) < w) weights.set(t, w); };
+  for (const t of qt) add(t, 1);
+  for (const w of ql.match(/[a-z]+/g) || []) for (const x of SYNONYMS[w] || []) add(stem(x), 0.6);
+  const follow = isFollowUp(question, qt);
+  if (follow && ctx.prev) for (const t of tokens(ctx.prev)) add(t, 0.5);
+  const cited = new Set(follow ? (ctx.cited || []).map((t) => String(t).toLowerCase()) : []);
+  const words = ql.match(/[a-z0-9À-ɏ]{3,}/g) || [], pairs = [];
+  for (let i = 0; i + 1 < words.length; i++) if (!STOP.has(words[i]) && !STOP.has(words[i + 1])) pairs.push(words[i] + ' ' + words[i + 1]);
+  const sel = ctx.sel || (typeof S !== 'undefined' && S.sel >= 0 && S.nodes[S.sel] ? S.nodes[S.sel].title : '');
+  return IDX.notes.map((n, i) => {
+    const d = docs[i]; let s = 0;
+    for (const [t, w] of weights) {
+      const f = df.get(t) || 0; if (!f) continue;
+      const idf = Math.log(1 + (N - f + 0.5) / (f + 0.5)), tf = d.tf.get(t) || 0;
+      if (tf) s += w * idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * d.len / avg));
+      if (d.title.has(t)) s += w * idf * 2.5;
     }
-    for (const b of BOOSTS) if (b.re.test(question) && title === b.title) s += 6;
-    if (S.sel >= 0 && n.title === S.nodes[S.sel].title) s += 2;
+    for (const pr of pairs) if (d.text.includes(pr)) s += 2;
+    if (d.low.length > 3 && ql.includes(d.low)) s += 12;
+    if (s > 0 || follow) { if (cited.has(d.low)) s += 5; }
+    for (const b of BOOSTS) if (b.re.test(question) && d.low === b.title) s += 4;
+    if (sel && n.title === sel) s += 1;
     return { n, s };
   }).sort((a, b) => b.s - a.s);
 }
+function scoreNotes(question) { return rankNotes(question); }
 function firstSentence(text) {
   const t = text.replace(/^#.*$/m, '').replace(/What it is:\s*/i, '').replace(/\*\*/g, '').replace(/\[\[|\]\]/g, '').replace(/\s+/g, ' ').trim();
   const m = t.match(/^(.{20,200}?[.!?])(\s|$)/);
@@ -843,25 +911,71 @@ function snippet(n, question, max = 950) {
   for (const x of pick) { const t = x.l.length > budget ? x.l.slice(0, Math.max(budget, 0)) : x.l; if (t.length < 30 && out.length) break; out.push({ i: x.i, t }); budget -= t.length + 1; if (budget < 40) break; }
   return (head ? head + '\n' : '') + out.sort((a, b) => a.i - b.i).map((x) => x.t).join('\n');
 }
-const withSnippets = (list, q) => list.map((n) => (String(n.text || '').length > 950 ? { ...n, text: snippet(n, q) } : n));
-
-function retrieve(question) {
-  if (NOTES.length <= 25) return withSnippets(NOTES, question);   // small vault: send everything
-  const scored = scoreNotes(question);
-  const top = scored.slice(0, 12).filter((x) => x.s > 0).map((x) => x.n);
-  // pull in direct neighbours of the best matches so related notes come along
-  const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
-  const seen = new Set(top.map((n) => n.title));
-  for (const t of top.slice(0, 3)) {
-    const node = byTitle.get(t.title.toLowerCase());
-    if (!node) continue;
-    for (const j of S.adj[node.i]) {
-      const nt = NOTES.find((n) => n.title === S.nodes[j].title);
-      if (nt && !seen.has(nt.title) && top.length < 22) { top.push(nt); seen.add(nt.title); }
+// Choose what Jarvis reads for one question: as many whole notes as the AI in use can take (budget in characters),
+// best match first, plus the notes linked to the best matches. Small vaults fit completely on the larger models.
+function packNotes(question, budget, ctx) {
+  ctx = ctx || {};
+  const ranked = rankNotes(question, ctx);
+  const size = (n) => String(n.text || '').length + String(n.title || '').length + 20;
+  if (NOTES.reduce((a, n) => a + size(n), 0) <= budget) return ranked.map((x) => x.n);
+  const top = ranked.length ? ranked[0].s : 0;
+  let keep = ranked.filter((x, i) => x.s > 0 && (i < 4 || x.s >= top * 0.15)).slice(0, 14).map((x) => x.n);
+  if (keep.length && typeof S !== 'undefined' && S.nodes && S.adj) {      // linked notes of the two best matches come along
+    const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
+    const seen = new Set(keep.map((n) => n.title));
+    for (const t of keep.slice(0, 2)) {
+      const node = byTitle.get(t.title.toLowerCase()); if (!node) continue;
+      for (const j of S.adj[node.i] || []) {
+        const nt = NOTES.find((n) => n.title === S.nodes[j].title);
+        if (nt && !seen.has(nt.title) && keep.length < 18) { keep.push(nt); seen.add(nt.title); }
+      }
     }
   }
-  return withSnippets(top.length ? top : NOTES.slice(0, 20), question);
+  if (!keep.length) keep = NOTES.filter((n) => /^(?:router|wiki)$/.test(n.type)).concat(NOTES).filter((n, i, a) => a.indexOf(n) === i).slice(0, 6);   // nothing matched: give the overview notes
+  const qx = isFollowUp(question) && ctx.prev ? question + ' ' + ctx.prev : question;
+  const out = []; let left = budget;
+  const big = Math.max(1, Math.min(4, budget / 11000));                  // roomier models read more of each note
+  keep.forEach((n, i) => {
+    if (left < 250) return;
+    const cap = Math.min(left, Math.round((i === 0 ? 4000 : i < 3 ? 2200 : 1200) * big));
+    const text = String(n.text || '').length > cap ? snippet(n, qx, cap) : n.text;
+    out.push({ ...n, text }); left -= text.length + String(n.title).length + 20;
+  });
+  return out;
 }
+
+/* ---------- Jarvis memory: "remember that ...", "what do you remember?", "forget ..." (kept in this browser only) ---------- */
+const MEM = (() => {
+  const KEY = 'brain.memory';
+  const load = () => { try { const a = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(a) ? a.filter((x) => x && x.t) : []; } catch (e) { return []; } };
+  const save = (a) => { try { localStorage.setItem(KEY, JSON.stringify(a.slice(-80))); } catch (e) {} };
+  const HEY = '^\\s*(?:(?:hey\\s+)?jarvis[,.\\s]+)?(?:please\\s+)?';
+  function command(q) {
+    q = String(q || '');
+    if (new RegExp(HEY + '(?:what|which things?)\\s+(?:do|did|have)\\s+you\\s+(?:remember|got\\s+in\\s+memory|have\\s+in\\s+(?:your\\s+)?memory)|' + HEY + '(?:list|show)\\b[^.?!]*\\b(?:memory|memories|remembered)\\b', 'i').test(q)) {
+      const a = load();
+      return a.length ? 'I remember ' + a.length + (a.length === 1 ? ' thing' : ' things') + ':\n' + a.map((x) => '• ' + x.t).join('\n') : 'Nothing yet. Say "remember that" followed by what I should keep.';
+    }
+    let m = q.match(new RegExp(HEY + 'forget\\s+(?:about\\s+|that\\s+)?(.{2,200}?)[\\s.!]*$', 'i'));
+    if (m) {
+      const a = load();
+      if (/^(?:everything|all|it all|all of (?:it|that)|everything you remember|your memory)$/i.test(m[1].trim())) { save([]); return a.length ? 'Done. I have cleared everything I was asked to remember.' : 'There was nothing saved.'; }
+      const want = tokens(m[1]); if (!want.length) return '';
+      const keep = a.filter((x) => { const have = new Set(tokens(x.t)); return want.filter((t) => have.has(t)).length < Math.max(1, Math.ceil(want.length / 2)); });
+      if (keep.length === a.length) return a.length ? 'I have nothing saved about that.' : '';
+      save(keep); return 'Forgotten. That was ' + (a.length - keep.length) + (a.length - keep.length === 1 ? ' item.' : ' items.');
+    }
+    m = q.match(new RegExp(HEY + '(?:remember|keep\\s+in\\s+mind|note|make\\s+a\\s+note)\\s+that\\s+(.{4,300}?)[\\s.!]*$', 'i')) || q.match(new RegExp(HEY + 'remember\\s+(?!to\\b|when\\b|what\\b|how\\b|who\\b|where\\b|why\\b|the\\s+time\\b|if\\b)(.{6,300}?)[\\s.!]*$', 'i'));
+    if (m && !/\?\s*$/.test(q)) {
+      const t = m[1].trim(), a = load().filter((x) => x.t.toLowerCase() !== t.toLowerCase());
+      a.push({ t, at: new Date().toISOString().slice(0, 10) }); save(a);
+      return 'Noted. I will remember that ' + t.replace(/\bmy\b/gi, 'your').replace(/\bI am\b|\bI'm\b/g, 'you are').replace(/\bI\b/g, 'you') + '.';
+    }
+    return '';
+  }
+  const note = () => { const a = load(); return a.length ? { title: 'Things you asked me to remember', type: 'memory', text: a.map((x) => '- ' + x.t + ' (said on ' + x.at + ')').join('\n') } : null; };
+  return { command, note, load };
+})();
 
 function renderAnswer(text) {
   const box = $('#answer');
@@ -2040,6 +2154,8 @@ const svc = (() => {
 
 const WEB_RE = /\b(?:search|look\s*up|google|latest|news|current(?:ly)?|right now|today'?s?|tonight|this (?:week|morning)|weather|temperature|forecast|price|prices|cost of|oil|brent|crude|gas|petrol|diesel|gold|silver|bitcoin|btc|ethereum|crypto|stock|stocks|share price|exchange rate|rate of|how much (?:is|does|are)|who won|score|results?|trending|traffic|open now|opening hours|who is|who was|what happened|what's happening)\b/i;
 
+const PERSONAL_RE = /\b(?:my|our|mine|i|i've|i'm|me|we)\b[^.?!]*\b(?:notes?|brain|vault|calendar|schedule|agenda|meetings?|appointments?|e-?mails?|inbox|gmail|projects?|courses?|open items|to.?dos?|tasks?|repos?|repositor(?:y|ies)|videos?|channel|dashboard|deck|presentation|working on|planned|plans?|remember|told you)\b|\bopen items\b|\bin my notes\b/i;
+
 // Fly through the most connected notes and read each one out
 async function tour() {
   const hubs = [...S.vis].sort((a, b) => b.degree - a.degree).slice(0, 6);
@@ -2073,6 +2189,7 @@ async function ask(question) {
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
   if (gg.isLookup(question)) { await gg.lookupAddress(question); return; }
   if (/\b(?:tour|show me around|walk me through|fly through)\b/i.test(question)) { await tour(); return; }
+  { const mem = MEM.command(question); if (mem) { renderAnswer(mem); orb.set('idle'); say(mem); return; } }   // "remember that ...", "what do you remember?", "forget ..."
   const box = $('#answer');
   let ask_q = question;
   if (/^\s*(?:good\s+(?:morning|afternoon|evening)|morning|briefing|brief me|daily brief|jarvis status|status)\b/i.test(question)) ask_q = 'Give me a short spoken briefing for now: my calendar for today and tomorrow, my unread email, and my open items from the notes. Three or four sentences.';
@@ -2090,7 +2207,8 @@ async function ask(question) {
   S.cited = new Set();
   try {
     let web = [];
-    const live = WEB_RE.test(question) && !gg.isYoutube(question);
+    const mine = PERSONAL_RE.test(question) && !/\b(?:search|look\s*up|google|on the web|online)\b/i.test(question);   // about the user's own things: answer from notes, calendar and mail, not the web
+    const live = WEB_RE.test(question) && !gg.isYoutube(question) && !mine;
     if (live && !GKEY()) {                                         // no personal key: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {
@@ -2100,12 +2218,17 @@ async function ask(question) {
       } catch (e) { /* answer without it */ }
     }
     const tA = Date.now();
-    const r = await Promise.race([brainFetch({ live, question: ask_q, notes: [...web, ...(await gg.notesFor(ask_q)), ...retrieve(ask_q)].slice(0, 12), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error((brainFetch.lastErr ? brainFetch.lastErr + '. ' : '') + 'The AI did not answer in time. Try again in a moment.')), 50000))]);
+    const users = chat.history.filter((m) => m.role === 'user'), bots = chat.history.filter((m) => m.role === 'assistant');
+    const rctx = { prev: users.length ? users[users.length - 1].content : '', cited: ((bots.length ? bots[bots.length - 1].content : '').match(/\[\[[^\]]+\]\]/g) || []).map((t) => t.slice(2, -2)) };
+    const extra = [...web, ...(await gg.notesFor(ask_q))], memNote = MEM.note();
+    const used = extra.reduce((a, n) => a + String(n.text || '').length, 0) + (memNote ? memNote.text.length : 0);
+    const notes = [...(memNote ? [memNote] : []), ...extra, ...packNotes(ask_q, Math.max(contextBudget() - used, 4000), rctx)];
+    const r = await Promise.race([brainFetch({ live, question: ask_q, notes, history: chat.history, now: new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) }), new Promise((_, rej) => setTimeout(() => rej(new Error((brainFetch.lastErr ? brainFetch.lastErr + '. ' : '') + 'The AI did not answer in time. Try again in a moment.')), 50000))]);
     const data = await r.json().catch(() => ({}));
     vlog('answer: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
-    chat.history = chat.history.slice(-6);
+    chat.history = chat.history.slice(-10);
     renderAnswer(data.answer);
     if (OL.on()) box.append(el('div', 'muted', data.via === 'ollama' ? 'Answered on this PC by ' + data.model + '.' : 'Answered by the cloud AI (Ollama was not available).'));
     orb.set('idle');

@@ -11,7 +11,7 @@
 //   MODEL              Claude model name (default: claude-sonnet-5-5)
 //   WORKERS_AI_MODEL   free model name (default: @cf/meta/llama-3.1-8b-instruct-fp8)
 //   TTS_MODEL          free text-to-speech model (default: @cf/deepgram/aura-2-en)
-//   GROQ_MODEL         Groq chat model (default: picked automatically from what your key can use)
+//   GROQ_MODEL         Groq chat model (default: the smartest one your key can use, picked automatically)
 //   STT_MODEL          free speech-to-text model (default: @cf/openai/whisper-large-v3-turbo)
 
 const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
@@ -19,39 +19,61 @@ const DEFAULT_ORIGIN = "https://glretief-ux.github.io";
 const json = (obj, status, headers) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...headers } });
 
-const SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's personal knowledge base (their "second brain").
-Answer using ONLY the notes provided below. If the notes do not contain the answer, say so briefly and suggest which note could be added.
-Be concise: one to four short sentences, or a short list. Plain language, no preamble.
-Whenever you mention a note, write its exact title in double square brackets, like [[Seizure Watch]].
-Never invent details that are not in the notes.`;
+const systemPrompt = (now) => `You are J.A.R.V.I.S., the user's personal assistant, working from their "second brain" of notes. It is now ${now}.
+The NOTES below are the user's own knowledge base. They may also hold live calendar, Gmail and web results, and things the user asked you to remember.
+- For anything about the user, their projects, plans, files, people or schedule, rely on the notes. Never invent personal details.
+- Think before you answer: combine facts from several notes, compare, count, and work out dates, deadlines or next steps from today's date when that answers the question.
+- If the notes do not cover it and it is general knowledge, answer from what you know and say in a few words that it is not from the notes. If it is personal and missing, say so briefly and name the note where it belongs.
+- Use the earlier turns of the conversation to understand short follow-up questions.
+- Match the length to the question. Normally one to four short sentences, because answers are read aloud. Give a longer answer or a short list only when asked to explain, list, compare, plan or advise.
+- Lead with the answer. Plain language, no preamble, no headings or tables.
+- When you use a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
+- If the question could mean two things, answer the likelier one and ask one short question to check.`;
 
 // ---- Groq (free tier, separate daily allowance from Cloudflare) ----
-let groqPicked = null;
-// Ask Groq which chat models this key can use, and pick a good one (models get renamed over time)
-async function groqPick(env) {
-  const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: "Bearer " + env.GROQ_API_KEY } });
-  const d = await r.json().catch(() => ({}));
-  const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
-  const prefer = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
-  return prefer.find((m) => ids.includes(m)) || ids[0] || null;
+let groqList = null;
+// Ask Groq which chat models this key can use, smartest first (models get renamed over time)
+const GROQ_PREF = [/llama-3\.3-70b/, /gpt-oss-120b/, /kimi-k2/, /llama-4.*maverick/, /qwen/, /llama-4/, /70b/, /gpt-oss-20b/, /llama-3\.1-8b/];
+async function groqRank(env) {
+  if (groqList) return groqList;
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: "Bearer " + env.GROQ_API_KEY }, signal: AbortSignal.timeout(6000) });
+    const d = await r.json().catch(() => ({}));
+    const ok = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard|compound|allam/i.test(id));
+    const out = [];
+    for (const re of GROQ_PREF) for (const id of ok) if (re.test(id) && !out.includes(id)) out.push(id);
+    for (const id of ok) if (!out.includes(id)) out.push(id);
+    if (out.length) { groqList = out; return out; }
+  } catch (e) { /* use the usual names */ }
+  return ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "llama-3.1-8b-instant"];
 }
 const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label + " took too long")), ms))]);
+// Best model first; if it is busy, over its free limit or retired, the next one answers
 async function groqChat(env, messages, max_tokens) {
-  const call = (model) => fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer " + env.GROQ_API_KEY },
-    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 }),
-    signal: AbortSignal.timeout(12000),
-  });
-  let model = env.GROQ_MODEL || groqPicked || "llama-3.1-8b-instant";
-  let r = await call(model);
-  let d = await r.json().catch(() => ({}));
-  if (!r.ok && /model/i.test((d.error && d.error.message) || "")) {          // wrong or retired model: find one that works
-    const alt = await groqPick(env);
-    if (alt && alt !== model) { groqPicked = alt; r = await call(alt); d = await r.json().catch(() => ({})); }
+  const models = env.GROQ_MODEL ? [env.GROQ_MODEL, ...(await groqRank(env))] : await groqRank(env);
+  const t0 = Date.now(); let lastErr = "no model available";
+  for (const model of [...new Set(models)].slice(0, 3)) {
+    if (Date.now() - t0 > 18000) break;
+    const payload = { model, messages, max_tokens, temperature: 0.3 };
+    if (/gpt-oss/.test(model)) { payload.reasoning_effort = "low"; payload.max_tokens = max_tokens + 700; }
+    try {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + env.GROQ_API_KEY },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12000),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const t = String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+        if (t) return t;
+        lastErr = model + " gave an empty answer"; continue;
+      }
+      lastErr = (d.error && d.error.message) || "Groq error " + r.status;
+      if (r.status === 401) break;
+    } catch (e) { lastErr = (e && e.message) || "Groq did not answer"; }
   }
-  if (!r.ok) throw new Error((d.error && d.error.message) || "Groq error " + r.status);
-  return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").trim();
+  throw new Error(lastErr);
 }
 async function cfChat(env, messages, max_tokens) {
   const out = await withTimeout(env.AI.run(env.WORKERS_AI_MODEL || "@cf/meta/llama-3.1-8b-instruct-fp8", { messages, max_tokens }), 20000, "Workers AI");
@@ -230,17 +252,22 @@ ${contacts || "(none)"}`;
     if (!question) return json({ error: "Empty question" }, 400, cors);
 
     const useClaude = Boolean(env.ANTHROPIC_API_KEY);
-    const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, useClaude ? 25 : 9);
-    const textCap = useClaude ? 2500 : 1000; // free model gets a smaller context
-    const context = notes
-      .map((n) => `## ${String(n.title).slice(0, 120)} (${String(n.type).slice(0, 30)})\n${String(n.text).slice(0, textCap)}`)
-      .join("\n\n");
+    // The page sends its notes best match first; read as many as the model in use can take
+    let room = useClaude ? 60000 : env.GROQ_API_KEY ? 14000 : 9000;
+    const parts = [];
+    for (const n of (Array.isArray(body.notes) ? body.notes : []).slice(0, 60)) {
+      if (room < 200) break;
+      const text = String((n && n.text) || "").slice(0, Math.min(room, useClaude ? 6000 : 4000));
+      parts.push(`## ${String((n && n.title) || "").slice(0, 120)} (${String((n && n.type) || "").slice(0, 30)})\n${text}`);
+      room -= text.length + 40;
+    }
+    const context = parts.join("\n\n");
 
     // keep only well-formed, alternating history that starts with a user turn
     const messages = [];
-    for (const m of (Array.isArray(body.history) ? body.history : []).slice(-6)) {
+    for (const m of (Array.isArray(body.history) ? body.history : []).slice(-8)) {
       const role = m && m.role;
-      const content = String((m && m.content) || "").slice(0, 1500);
+      const content = String((m && m.content) || "").slice(0, useClaude ? 1500 : 700);
       if (!content || (role !== "user" && role !== "assistant")) continue;
       const expected = messages.length % 2 === 0 ? "user" : "assistant";
       if (role === expected) messages.push({ role, content });
@@ -248,11 +275,12 @@ ${contacts || "(none)"}`;
     if (messages.length && messages[messages.length - 1].role === "user") messages.pop();
     messages.push({ role: "user", content: question });
 
-    const system = `${SYSTEM}\n\nNOTES:\n\n${context}`;
+    const now = String(body.now || "").slice(0, 80) || new Date().toUTCString();
+    const system = `${systemPrompt(now)}\n\nNOTES:\n\n${context}`;
 
     if (!useClaude) {
       try {
-        const answer = await freeChat(env, [{ role: "system", content: system }, ...messages], 500);
+        const answer = await freeChat(env, [{ role: "system", content: system }, ...messages], 900);
         if (!answer) return json({ error: "The free model returned nothing" }, 502, cors);
         return json({ answer }, 200, cors);
       } catch (e) {
@@ -269,7 +297,7 @@ ${contacts || "(none)"}`;
       },
       body: JSON.stringify({
         model: env.MODEL || "claude-sonnet-5-5",
-        max_tokens: 700,
+        max_tokens: 1000,
         system,
         messages,
       }),

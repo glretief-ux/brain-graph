@@ -142,3 +142,13 @@ The GitHub job runs `scripts/fetch_markets.py` every half hour and writes `site/
 ## YouTube analysis
 
 Jarvis can read your own YouTube channel (read only) through the same Google sign-in as Calendar and Gmail. It loads subscribers, total views, your latest uploads with views, likes and comments, and from YouTube Analytics the last 28 days compared with the 28 days before (views, watch time, average view duration, subscribers gained and lost, likes, comments, shares, traffic sources and top videos). Ask things like "How is my channel doing?", "Which video did best this month?" or "Why did my views drop?". One-time setup: in Google Cloud (same project as the Google client ID) enable **YouTube Data API v3** and **YouTube Analytics API**, then in Jarvis tap Sign out and Connect Google again and tick the YouTube permissions. Pick the account or brand account that owns the channel.
+
+## How Jarvis thinks
+- **Model:** with a Groq key (in the panel or in the Worker) Jarvis asks Groq which models the key can use and takes the smartest one first (for example Llama 3.3 70B or GPT-OSS 120B). If that model is busy or over its free limit, the next one answers. A Gemini key uses the newest Flash model.
+- **Reading the notes:** every note is ranked for each question (rare words count more, a note named in the question comes first, linked notes come along). Jarvis reads as much of the best notes as the model in use can take: about 11,000 characters on Groq and the Worker, about 60,000 on Gemini.
+- **Follow-ups:** a short question such as "and when is it due?" borrows the words of the question before it, and the last ten turns are kept.
+- **Outside the notes:** general-knowledge questions get an answer with a few words saying it is not from the notes. Personal facts are never invented.
+- **Memory:** "remember that ...", "what do you remember?", "forget ..." and "forget everything". Stored in this browser only, so the iPad and the PC each keep their own list.
+- **Personal questions stay off the web:** "what is on my calendar today" is answered from your notes, calendar and mail, not from a web search.
+
+After changing `worker/worker.js`, paste the new file into the Worker in the Cloudflare dashboard and press Deploy; the page itself updates on its own.
