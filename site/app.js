@@ -620,13 +620,49 @@ async function groqChatDirect(messages, max_tokens) {
   if (!r.ok) throw new Error('Groq: ' + ((d.error && d.error.message) || 'error ' + r.status));
   return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
 }
+// ---- Web search that needs no key: DuckDuckGo results read through the free Jina reader, then the Worker, then Wikipedia ----
+const NOSEARCH_KEY = 'brain.nativeSearchDown';
+const nativeSearchDown = () => { try { return Date.now() - Number(localStorage.getItem(NOSEARCH_KEY) || 0) < 12 * 3600 * 1000; } catch (e) { return false; } };
+const markNativeSearchDown = () => { try { localStorage.setItem(NOSEARCH_KEY, String(Date.now())); } catch (e) {} };
+function parseDdg(md) {
+  const out = [], re = /## \[([^\]]+)\]\(https?:\/\/duckduckgo\.com\/l\/\?uddg=([^&)\s]+)[^)]*\)([\s\S]*?)(?=## \[|$)/g;
+  let m;
+  while ((m = re.exec(md)) && out.length < 7) {
+    let url = ''; try { url = decodeURIComponent(m[2]); } catch (e) { continue; }
+    let text = '';
+    for (const t of m[3].matchAll(/(?:^|[^!])\[([^\]]{25,})\]\(/g)) { const c = t[1].replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); if (!/^(?:www\.|https?:)/i.test(c) && c.length > text.length) text = c; }
+    out.push({ title: m[1].replace(/\s+/g, ' ').trim(), url, text: text.slice(0, 400) });
+  }
+  return out;
+}
+async function webLookup(query) {
+  const q = String(query || '').replace(/^\s*(?:(?:hey\s+)?jarvis[,.\s]+)?(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s*up|google)\s+/i, '').slice(0, 200);
+  if (!q) return [];
+  try {
+    const r = await fetchT('https://r.jina.ai/https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {}, 14000);
+    if (r.ok) { const res = parseDdg(await r.text()); if (res.length) return res; }
+  } catch (e) { /* try the next source */ }
+  if (CHAT_URL) {
+    try {
+      const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search: q }) }, 12000);
+      const d = await r.json().catch(() => ({}));
+      if ((d.results || []).length) return d.results.slice(0, 6);
+    } catch (e) { /* try the next source */ }
+  }
+  try {
+    const r = await fetchT('https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=5&srsearch=' + encodeURIComponent(q), {}, 8000);
+    const d = await r.json();
+    return ((d.query && d.query.search) || []).map((x) => ({ title: x.title, url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(x.title.replace(/ /g, '_')), text: String(x.snippet).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').slice(0, 300) }));
+  } catch (e) { return []; }
+}
+const webNotes = (res) => (res || []).slice(0, 6).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
 const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () => obj });
 // Same job as the Worker's text modes, but done here when a Groq key is saved. Falls back to the Worker.
 async function brainFetch(body) {
   if (GKEY() || (OL.on() && !body.search)) {
     try {
       brainFetch.lastErr = '';
-      if (body.question && body.live && GKEY()) {                                 // needs current facts: let the AI search the web itself
+      if (body.question && body.live && GKEY() && !nativeSearchDown()) {                                 // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
         const ctxLive = (body.notes || []).slice(0, IS_GEM() ? 9 : 5).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, IS_GEM() ? 1000 : 600)).join('\n\n');
         const sysLive = 'You are J.A.R.V.I.S., the user\'s everyday assistant. Today is ' + when0 + '. If the question is about the user\'s own projects, notes, calendar or email, answer from the NOTES below and write each note title you mention in double square brackets, like [[Seizure Watch]]. For anything else (flights, travel, shopping, facts, how-to, news, prices), search the web and answer with current information. Be concise: a few short sentences, or a short list when comparing options, with prices, times and dates where you have them. No preamble.' + (ctxLive ? '\n\nNOTES:\n\n' + ctxLive : '');
@@ -642,6 +678,7 @@ async function brainFetch(body) {
             }
             brainFetch.lastErr = 'Gemini returned an empty answer';
           } catch (e) { brainFetch.lastErr = e.message; }
+          markNativeSearchDown();                                           // free Gemini keys cannot use Google Search on newer models: use our own search for the next 12 hours
         } else {
           for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
             try {
@@ -651,9 +688,11 @@ async function brainFetch(body) {
               if (t) return fakeRes({ answer: String(t).trim() });
             } catch (e) { /* try the next one */ }
           }
+          markNativeSearchDown();
         }
       }
       if (body.question) {
+        if (body.live && GKEY() && !(body.notes || []).some((n) => n.type === 'web')) body.notes = [...webNotes(await webLookup(body.question)), ...(body.notes || [])];
         const ctx = (body.notes || []).slice(0, 9).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 1000)).join('\n\n');
         const msgs = [];
         for (const m of (body.history || []).slice(-6)) {
@@ -674,8 +713,10 @@ async function brainFetch(body) {
           const lhist = follow ? msgs.slice(0, -1).slice(-2) : [];
           const lsys = 'You are J.A.R.V.I.S., a concise assistant for the user\'s notes. Answer ONLY from the NOTES in the message. If they do not contain the answer, say "I do not have a note on that." Reply in one to four short sentences. When you mention a note, write its exact title in double square brackets like [[Seizure Watch]]. Never apologise and never mention mistakes.';
           answer = await groqChatDirect([{ role: 'system', content: lsys }, ...lhist, { role: 'user', content: 'NOTES:\n\n' + lctx + '\n\nQUESTION: ' + q }], 500);
-        } else answer = await groqChatDirect([{ role: 'system', content: BRAIN_SYSTEM + '\n\nNOTES:\n\n' + ctx }, ...msgs], 500);
-        if (body.live && brainFetch.lastErr && GKEY()) answer += '\n\n(Live web search failed: ' + brainFetch.lastErr + ')';
+        } else {
+          const sysAny = body.live ? 'You are J.A.R.V.I.S., the user\'s everyday assistant. Today is ' + new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) + '. The material below holds WEB search results (type web) and the user\'s own notes. For general questions (prices, flights, travel, shopping, facts, how-to) answer from the web results and name the shop or site a figure comes from. For questions about the user\'s own projects answer from the notes and write note titles in double square brackets like [[Seizure Watch]]. If the material does not cover it, answer from your general knowledge and say it may be out of date. Never say the notes do not contain something and never suggest adding a note. Be concise: a few short sentences or a short list. No preamble.' : BRAIN_SYSTEM;
+          answer = await groqChatDirect([{ role: 'system', content: sysAny + '\n\nNOTES:\n\n' + ctx }, ...msgs], body.live ? 700 : 500);
+        }
         return fakeRes({ answer, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
       if (body.compose) {
@@ -2095,9 +2136,7 @@ async function ask(question) {
     if (live && !GKEY()) {                                         // no personal key: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {
-        const wr = await brainFetch({ search: question.replace(/^\s*(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google)\s+/i, '') });
-        const wd = await wr.json().catch(() => ({}));
-        web = (wd.results || []).slice(0, 5).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
+        web = webNotes(await webLookup(question));
       } catch (e) { /* answer without it */ }
     }
     const tA = Date.now();
