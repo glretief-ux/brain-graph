@@ -640,8 +640,11 @@ async function webLookup(query) {
   if (!q) return [];
   try {
     const r = await fetchT('https://r.jina.ai/https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {}, 14000);
-    if (r.ok) { const res = parseDdg(await r.text()); if (res.length) return res; }
-  } catch (e) { /* try the next source */ }
+    const body = r.ok ? await r.text() : '';
+    const res = parseDdg(body);
+    try { vlog('search: DuckDuckGo gave ' + res.length + ' results (status ' + r.status + ', ' + body.length + ' characters)'); } catch (e) {}
+    if (res.length) return res;
+  } catch (e) { try { vlog('search: DuckDuckGo failed, ' + e.message); } catch (e2) {} }
   if (CHAT_URL) {
     try {
       const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search: q }) }, 12000);
