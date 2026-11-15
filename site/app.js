@@ -1000,6 +1000,7 @@ const voiceBox = (() => {
       if (my !== token) return;
       busyAI = false; aiDown = true;
       toast('Jarvis voice failed (' + (e && e.message ? e.message : 'error') + '), using the device voice');
+      vlog('voice: the Jarvis voice failed (' + (e && e.message ? e.message : 'error') + '), switched to the device voice');
       onfail();
     }
   };
@@ -1143,7 +1144,8 @@ const voiceBox = (() => {
 // Small on-screen voice log: a photo of it shows exactly how far a voice request got
 const vlog = (m) => { try { const e = document.getElementById('vlog'); if (!e) return; const t = new Date().toLocaleTimeString('en-GB'); const L = (e._l = e._l || []); L.push(t + ' ' + String(m).slice(0, 110)); while (L.length > 9) L.shift(); e.textContent = L.join('\n'); } catch (x) {} };
 function say(text) {
-  vlog('answer: speaking ' + (('speechSynthesis' in window) ? 'with this device voice' : 'not supported') + ', "read aloud" ' + ($('#speak').checked ? 'on' : 'off'));
+  { const vs = document.getElementById('voice'), vn = vs && vs.selectedOptions && vs.selectedOptions[0] ? vs.selectedOptions[0].textContent : 'the device voice';
+    vlog('answer: voice "' + vn + '", "read aloud" ' + ($('#speak').checked ? 'on' : 'off')); }
   if (!$('#speak').checked) return;
   const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
