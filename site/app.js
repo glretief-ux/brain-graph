@@ -628,7 +628,8 @@ async function brainFetch(body) {
       brainFetch.lastErr = '';
       if (body.question && body.live && GKEY()) {                                 // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
-        const sysLive = 'You are J.A.R.V.I.S., a voice assistant. Today is ' + when0 + '. Answer the question using current information from the web. Be concise: one to three short sentences, give the figure with its unit and the time or date it applies to. No preamble.';
+        const ctxLive = (body.notes || []).slice(0, IS_GEM() ? 9 : 5).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, IS_GEM() ? 1000 : 600)).join('\n\n');
+        const sysLive = 'You are J.A.R.V.I.S., the user\'s everyday assistant. Today is ' + when0 + '. If the question is about the user\'s own projects, notes, calendar or email, answer from the NOTES below and write each note title you mention in double square brackets, like [[Seizure Watch]]. For anything else (flights, travel, shopping, facts, how-to, news, prices), search the web and answer with current information. Be concise: a few short sentences, or a short list when comparing options, with prices, times and dates where you have them. No preamble.' + (ctxLive ? '\n\nNOTES:\n\n' + ctxLive : '');
         const hist = (body.history || []).slice(-4).filter((m) => m && m.content);
         if (IS_GEM()) {
           try {
@@ -644,7 +645,7 @@ async function brainFetch(body) {
         } else {
           for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
             try {
-              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 500, messages: [{ role: 'system', content: sysLive }, { role: 'user', content: String(body.question).slice(0, 800) }] }) });
+              const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 900, messages: [{ role: 'system', content: sysLive }, { role: 'user', content: String(body.question).slice(0, 800) }] }) });
               const d = await r.json().catch(() => ({}));
               const t = r.ok && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
               if (t) return fakeRes({ answer: String(t).trim() });
@@ -2090,7 +2091,7 @@ async function ask(question) {
   S.cited = new Set();
   try {
     let web = [];
-    const live = WEB_RE.test(question) && !gg.isYoutube(question);
+    const live = (GKEY() || WEB_RE.test(question)) && !gg.isYoutube(question);   // with your own AI key every question may search the web; without one only questions that look current do
     if (live && !GKEY()) {                                         // no personal key: search the web through the Worker
       box.replaceChildren(el('span', 'muted', 'Searching the web…'));
       try {
