@@ -620,35 +620,18 @@ async function groqChatDirect(messages, max_tokens) {
   if (!r.ok) throw new Error('Groq: ' + ((d.error && d.error.message) || 'error ' + r.status));
   return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
 }
-// ---- Web search that needs no key: DuckDuckGo results read through the free Jina reader, then the Worker, then Wikipedia ----
+// ---- Backup web search that needs no key: the Worker's search, then Wikipedia ----
 const NOSEARCH_KEY = 'brain.nativeSearchDown';
-const nativeSearchDown = () => { try { return Date.now() - Number(localStorage.getItem(NOSEARCH_KEY) || 0) < 12 * 3600 * 1000; } catch (e) { return false; } };
+const nativeSearchDown = () => { try { return Date.now() - Number(localStorage.getItem(NOSEARCH_KEY) || 0) < 3600 * 1000; } catch (e) { return false; } };
 const markNativeSearchDown = () => { try { localStorage.setItem(NOSEARCH_KEY, String(Date.now())); } catch (e) {} };
-function parseDdg(md) {
-  const out = [], re = /## \[([^\]]+)\]\(https?:\/\/duckduckgo\.com\/l\/\?uddg=([^&)\s]+)[^)]*\)([\s\S]*?)(?=## \[|$)/g;
-  let m;
-  while ((m = re.exec(md)) && out.length < 7) {
-    let url = ''; try { url = decodeURIComponent(m[2]); } catch (e) { continue; }
-    let text = '';
-    for (const t of m[3].matchAll(/(?:^|[^!])\[([^\]]{25,})\]\(/g)) { const c = t[1].replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); if (!/^(?:www\.|https?:)/i.test(c) && c.length > text.length) text = c; }
-    out.push({ title: m[1].replace(/\s+/g, ' ').trim(), url, text: text.slice(0, 400) });
-  }
-  return out;
-}
 async function webLookup(query) {
   const q = String(query || '').replace(/^\s*(?:(?:hey\s+)?jarvis[,.\s]+)?(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s*up|google)\s+/i, '').slice(0, 200);
   if (!q) return [];
-  try {
-    const r = await fetchT('https://r.jina.ai/https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), {}, 14000);
-    const body = r.ok ? await r.text() : '';
-    const res = parseDdg(body);
-    try { vlog('search: DuckDuckGo gave ' + res.length + ' results (status ' + r.status + ', ' + body.length + ' characters)'); } catch (e) {}
-    if (res.length) return res;
-  } catch (e) { try { vlog('search: DuckDuckGo failed, ' + e.message); } catch (e2) {} }
   if (CHAT_URL) {
     try {
       const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search: q }) }, 12000);
       const d = await r.json().catch(() => ({}));
+      try { vlog('search: the Worker gave ' + (d.results || []).length + ' web results'); } catch (e) {}
       if ((d.results || []).length) return d.results.slice(0, 6);
     } catch (e) { /* try the next source */ }
   }
@@ -674,22 +657,34 @@ async function brainFetch(body) {
           try {
             const contents = [...hist.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content).slice(0, 800) }] })), { role: 'user', parts: [{ text: String(body.question).slice(0, 800) }] }];
             while (contents.length && contents[0].role !== 'user') contents.shift();
-            const text = await gemGenerate({ systemInstruction: { parts: [{ text: sysLive }] }, contents, tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 4096, temperature: 0.2 } });
+            const payload = { systemInstruction: { parts: [{ text: sysLive }] }, contents, tools: [{ google_search: {} }], generationConfig: { maxOutputTokens: 4096, temperature: 0.2 } };
+            let text = '';
+            for (const m of ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']) {   // free keys: Google Search works on these, not on Gemini 3 and newer
+              try {
+                const { r, d } = await gemCall(m, payload);
+                const cand = r.ok && (d.candidates || [])[0];
+                const t = cand ? String(((cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim() : '';
+                vlog('search: Google Search through ' + m + (t ? ' worked' : ' failed' + (d && d.error && d.error.message ? ', ' + String(d.error.message).slice(0, 90) : '')));
+                if (t) { text = t; gemGenerate.sources = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((c) => c.web && (c.web.title || c.web.uri)).filter(Boolean); break; }
+              } catch (e) { vlog('search: ' + m + ' failed, ' + e.message); }
+            }
+            if (!text) text = await gemGenerate(payload);
             if (text) {
               const src = [...new Set(gemGenerate.sources || [])].slice(0, 3);
               return fakeRes({ answer: text + (src.length ? '\n\nSources: ' + src.join(', ') : '') });
             }
             brainFetch.lastErr = 'Gemini returned an empty answer';
-          } catch (e) { brainFetch.lastErr = e.message; }
-          markNativeSearchDown();                                           // free Gemini keys cannot use Google Search on newer models: use our own search for the next 12 hours
+          } catch (e) { brainFetch.lastErr = e.message; vlog('search: Gemini search failed, ' + String(e.message).slice(0, 120)); }
+          markNativeSearchDown();                                           // free Gemini keys cannot use Google Search on newer models: skip it for the next hour
         } else {
           for (const m of ['groq/compound-mini', 'groq/compound', 'compound-beta-mini', 'compound-beta']) {   // Groq models that search the web themselves
             try {
               const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify({ model: m, max_tokens: 900, messages: [{ role: 'system', content: sysLive }, { role: 'user', content: String(body.question).slice(0, 800) }] }) });
               const d = await r.json().catch(() => ({}));
               const t = r.ok && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+              vlog('search: Groq ' + m + (t ? ' worked' : ' failed' + (d && d.error && d.error.message ? ', ' + String(d.error.message).slice(0, 90) : '')));
               if (t) return fakeRes({ answer: String(t).trim() });
-            } catch (e) { /* try the next one */ }
+            } catch (e) { vlog('search: Groq ' + m + ' failed, ' + e.message); }
           }
           markNativeSearchDown();
         }
