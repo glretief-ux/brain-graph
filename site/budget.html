@@ -321,7 +321,7 @@ function load(){
   return seed();
 }
 function save(){try{localStorage.setItem('hbudget3d',JSON.stringify(S))}catch(e){}}
-S=load();
+S=load();save();
 var catFilter=null,typeFilter='all',flashId=null;
 
 /* ---------- derived ---------- */

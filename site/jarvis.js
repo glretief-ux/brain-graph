@@ -307,6 +307,18 @@
     const text = await new Promise((res) => { waits.set(id, res); setTimeout(() => { if (waits.delete(id)) res('No answer from the budget.'); }, 6000); frame.contentWindow.postMessage({ jv: 'cmd', id, text: q }, location.origin); });
     $b('budMonth').textContent = text;
   });
+  // Direct read of the budget's saved data (same origin): works even if messages are blocked
+  function fromStorage() {
+    try {
+      const s = JSON.parse(localStorage.getItem('hbudget3d')); if (!s || !Array.isArray(s.tx)) return;
+      const mk = s.month || new Date().toISOString().slice(0, 7); let inc = 0, exp = 0; const by = {};
+      s.tx.forEach((t) => { if (String(t.date).slice(0, 7) !== mk) return; if (t.type === 'income') inc += t.amount; else { exp += t.amount; by[t.cat] = (by[t.cat] || 0) + t.amount; } });
+      const MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      const top = Object.keys(by).sort((a, c) => by[c] - by[a]).slice(0, 3).map((k) => ({ cat: k, amt: by[k], bud: (s.budgets || {})[k] || 0 }));
+      summary({ cur: s.currency || 'R', month: MN[+mk.slice(5, 7) - 1] + ' ' + mk.slice(0, 4), inc, exp, top, sample: !!s.sample && s.tx.some((t) => t.sample) });
+    } catch (e) { $b('budMonth').textContent = 'Budget unavailable'; }
+  }
+  fromStorage(); setInterval(fromStorage, 2000); addEventListener('storage', fromStorage);
   addEventListener('message', (e) => {
     const d = e.data;
     if (e.origin === location.origin && d && d.jv === 'summary') return summary(d);
