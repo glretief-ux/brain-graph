@@ -423,6 +423,8 @@ function renderAll(){
   renderSlicers();renderKpis();renderBudgets();renderLegend();renderTable();
   $('#sample').classList.toggle('on',!!S.sample&&S.tx.some(function(t){return t.sample}));
   if(bars)bars.rebuild();if(donut)donut.rebuild();
+  try{if(parent!==window){var t=totals(S.month),top=Object.keys(t.by).sort(function(a,c){return t.by[c]-t.by[a]}).slice(0,3).map(function(k){return {cat:k,amt:t.by[k],bud:S.budgets[k]||0}});
+    parent.postMessage({jv:'summary',cur:S.currency,month:mLabel(S.month,true),inc:t.inc,exp:t.exp,top:top,sample:!!S.sample},location.origin)}}catch(e){}
 }
 function commit(){save();renderAll()}
 

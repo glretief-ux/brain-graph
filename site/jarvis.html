@@ -10,9 +10,9 @@
 <title>J.A.R.V.I.S.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
-<link rel="stylesheet" href="style.css?v=46">
-<link rel="stylesheet" href="hud.css?v=46">
-<link rel="stylesheet" href="jarvis.css?v=46">
+<link rel="stylesheet" href="style.css?v=47">
+<link rel="stylesheet" href="hud.css?v=47">
+<link rel="stylesheet" href="jarvis.css?v=47">
 </head>
 <body class="jarvis">
 <canvas id="hudbg"></canvas>
@@ -90,9 +90,19 @@
     <div id="tmList"><span class="muted">No timers running.</span></div>
     <div class="tmq"><button type="button" data-q="set a timer for 5 minutes">+5m</button><button type="button" data-q="set a timer for 10 minutes">+10m</button><button type="button" data-q="set a timer for 25 minutes">+25m</button></div>
   </section>
-  <section class="card" id="links">
-    <h2>Quick links</h2>
-    <button type="button" class="lnk" id="openBudget"><span>Household Budget 3D</span><small>Open here · talk to Jarvis to add</small></button>
+  <section class="card" id="bud">
+    <h2>Household budget</h2>
+    <div class="bm" id="budMonth">Loading…</div>
+    <div class="bk">
+      <div><small>Income</small><b id="budInc">–</b></div>
+      <div><small>Expenses</small><b id="budExp" class="neg">–</b></div>
+      <div><small>Left over</small><b id="budLeft">–</b></div>
+      <div><small>Savings</small><b id="budSav">–</b></div>
+    </div>
+    <div class="bbar"><i id="budBar"></i></div>
+    <div id="budTop"></div>
+    <form id="budForm" autocomplete="off"><input id="budIn" placeholder="I spent 450 on groceries…" aria-label="Add to budget"><button type="submit">Add</button></form>
+    <button type="button" id="openBudget" class="bopen">Open 3D view</button>
   </section>
   <section class="card" id="feeds" hidden>
     <h2>Markets</h2><div id="fMarkets"></div>
@@ -193,10 +203,10 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=46"></script>
-<script src="vendor/three.min.js?v=46"></script>
-<script src="jarvis.js?v=46"></script>
-<script src="jarvis3d.js?v=46"></script>
-<script src="app.js?v=46"></script>
+<script src="config.js?v=47"></script>
+<script src="vendor/three.min.js?v=47"></script>
+<script src="jarvis.js?v=47"></script>
+<script src="jarvis3d.js?v=47"></script>
+<script src="app.js?v=47"></script>
 </body>
 </html>

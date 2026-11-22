@@ -287,8 +287,26 @@
   document.getElementById('budgetX').addEventListener('click', () => open(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) open(false); });
   const waits = new Map(); let seq = 0;
+  const $b = (id) => document.getElementById(id);
+  const fmt = (cur, n) => (n < 0 ? '-' : '') + cur + Math.round(Math.abs(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  function summary(d) {
+    const left = d.inc - d.exp, sav = d.inc > 0 ? Math.round(left / d.inc * 100) : 0;
+    $b('budMonth').textContent = d.month + (d.sample ? ' · sample data' : '');
+    $b('budInc').textContent = fmt(d.cur, d.inc); $b('budExp').textContent = fmt(d.cur, d.exp);
+    const l = $b('budLeft'); l.textContent = fmt(d.cur, left); l.classList.toggle('neg', left < 0);
+    $b('budSav').textContent = sav + '%';
+    const bar = $b('budBar'); bar.style.width = Math.min(100, d.inc ? d.exp / d.inc * 100 : 0) + '%'; bar.classList.toggle('over', d.exp > d.inc);
+    $b('budTop').replaceChildren(...d.top.map((t) => { const r = document.createElement('div'); r.textContent = t.cat; const s = document.createElement('span'); s.textContent = fmt(d.cur, t.amt) + (t.bud ? ' / ' + fmt(d.cur, t.bud) : ''); r.append(s); return r; }));
+  }
+  $b('budForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); const inp = $b('budIn'), q = inp.value.trim(); if (!q) return; inp.value = '';
+    const id = ++seq;
+    const text = await new Promise((res) => { waits.set(id, res); setTimeout(() => { if (waits.delete(id)) res('No answer from the budget.'); }, 6000); frame.contentWindow.postMessage({ jv: 'cmd', id, text: q }, location.origin); });
+    $b('budMonth').textContent = text;
+  });
   addEventListener('message', (e) => {
     const d = e.data;
+    if (e.origin === location.origin && d && d.jv === 'summary') return summary(d);
     if (e.origin !== location.origin || !d || d.jv !== 'reply') return;
     const w = waits.get(d.id); if (w) { waits.delete(d.id); w(d.text); }
   });
