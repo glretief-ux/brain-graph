@@ -4,7 +4,7 @@
    bottom dock (orb + ask console) | Systems drawer (search, hubs, filters, keys)
    Loads after style.css and hud.css.
    ============================================================ */
-:root { --lw: 296px; --rw: 300px; --top: 54px; --dockh: 164px; }
+:root { --lw: 380px; --rw: 300px; --top: 54px; --dockh: 164px; }
 body.jarvis { overflow: hidden; }
 
 /* graph + reactor sit in the middle; columns float above */
@@ -23,8 +23,8 @@ body.jarvis #bar { top: calc(var(--top) + env(safe-area-inset-top)); right: auto
 #colR { right: calc(12px + env(safe-area-inset-right)); width: var(--rw); }
 
 #colL .gauges { grid-template-columns: repeat(3, 1fr); gap: 4px 0; }
-#colL canvas.gc { width: 92px; height: 92px; }
-#colL .gauges figcaption { font-size: 9px; letter-spacing: .1em; }
+#colL canvas.gc { width: 120px; height: 120px; }
+#colL .gauges figcaption { font-size: 11px; letter-spacing: .1em; }
 
 /* glass cards (same bracket treatment as the Systems drawer) */
 #colL > section, #colR > section {
@@ -74,7 +74,9 @@ body.jarvis #feeds h2 { margin-top: 4px; }
 #feeds h2 + div { margin-bottom: 8px; }
 
 /* google block lives in the left column now */
-#colL #google .hint { font-size: 13px; }
+#colL #google .hint { font-size: 16px; line-height: 1.45; }
+#colL > section h2 { font-size: 15px; }
+#colL #google button, #colL #google .btn { font-size: 15px; padding: 11px 18px; }
 #colL #compose, #colL #evcard { margin-top: 10px; }
 #colL #evcard { padding: 12px 14px; border: 1px solid var(--line); border-radius: 2px; background: rgba(3, 20, 28, .8); }
 #colL #inspector { max-height: 40vh; overflow-y: auto; scrollbar-width: none; }

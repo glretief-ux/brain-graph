@@ -132,7 +132,7 @@
   }
 
   /* ---------- ring gauges ---------- */
-  const SZ = 92;
+  const SZ = 120;
   let battery = null;
   if (navigator.getBattery) navigator.getBattery().then((b) => { battery = b; }).catch(() => {});
   const gauges = Array.from(document.querySelectorAll('canvas.gc')).map((cv) => { cv.width = SZ * 2; cv.height = SZ * 2; return { cv, g: cv.getContext('2d'), k: cv.dataset.k }; });
