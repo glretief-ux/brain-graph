@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="theme-color" content="#02080c">
+<title>J.A.R.V.I.S.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="style.css?v=46">
+<link rel="stylesheet" href="hud.css?v=46">
+<link rel="stylesheet" href="jarvis.css?v=46">
+</head>
+<body class="jarvis">
+<canvas id="hudbg"></canvas>
+<canvas id="c"></canvas>
+<canvas id="reactor"></canvas>
+
+<div id="ruler" aria-hidden="true">
+  <div id="days"></div>
+  <div id="clock"><b id="clockT">--:--</b><span id="clockD"></span></div>
+</div>
+
+<div id="bar">
+  <button id="btnPanel" title="Systems" aria-label="Open systems drawer">&#9776;</button>
+  <button id="btn3d" title="3D view on/off" aria-pressed="true">3D</button>
+  <button id="btnFit" title="Fit all">Fit</button>
+  <button id="btnPath" title="Path mode: tap two notes to trace the route" aria-pressed="false">Path</button>
+</div>
+
+<aside id="colL">
+  <div class="gauges" aria-hidden="true">
+    <figure><canvas class="gc" data-k="time"></canvas><figcaption>LOCAL TIME</figcaption></figure>
+    <figure><canvas class="gc" data-k="date"></canvas><figcaption id="capDate">DATE</figcaption></figure>
+    <figure><canvas class="gc" data-k="notes"></canvas><figcaption>NOTES ONLINE</figcaption></figure>
+    <figure><canvas class="gc" data-k="links"></canvas><figcaption>CONNECTIONS</figcaption></figure>
+    <figure><canvas class="gc" data-k="power"></canvas><figcaption id="capPower">POWER</figcaption></figure>
+    <figure><canvas class="gc" data-k="ai"></canvas><figcaption>AI LINK</figcaption></figure>
+  </div>
+<section id="google">
+    <h2>Calendar &amp; Gmail</h2>
+    <div id="gStatus" class="hint">Not connected.</div>
+    <div id="gAgenda"></div>
+    <div class="grow">
+      <button type="button" id="gConnect" class="gbtn">Connect Google</button>
+      <button type="button" id="gRefresh" class="gbtn" hidden>Refresh</button>
+      <button type="button" id="gOut" class="gbtn" hidden>Sign out</button>
+    </div>
+    <div id="compose" hidden>
+      <div class="clabel">Draft email (nothing is sent until you tap Send)</div>
+      <input id="cTo" type="email" placeholder="To (email address)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="cSubj" type="text" placeholder="Subject" autocomplete="off">
+      <textarea id="cBody" rows="8" placeholder="Message"></textarea>
+      <div class="grow">
+        <button type="button" id="cSend" class="gbtn">Send</button>
+        <button type="button" id="cSave" class="gbtn">Save draft</button>
+        <button type="button" id="cCancel" class="gbtn">Discard</button>
+      </div>
+    </div>
+  </section>
+
+<div id="evcard" hidden>
+      <div class="clabel">Calendar event (nothing is added until you tap Add)</div>
+      <input id="eTitle" type="text" placeholder="Title" autocomplete="off">
+      <label class="elab">Starts <input id="eStart" type="datetime-local"></label>
+      <label class="elab">Ends <input id="eEnd" type="datetime-local"></label>
+      <input id="eLoc" type="text" placeholder="Location (optional)" autocomplete="off">
+      <div class="grow">
+        <button type="button" id="eAdd" class="gbtn">Add</button>
+        <button type="button" id="eCancel" class="gbtn">Discard</button>
+      </div>
+    </div>
+  <section>
+    <h2>Inspector</h2>
+    <div id="inspector"></div>
+  </section>
+</aside>
+
+<aside id="colR">
+  <section class="card" id="wx">
+    <h2>Weather</h2>
+    <div id="wxNow" class="wxnow"><span class="muted">Locating…</span></div>
+    <div id="wxDays"></div>
+  </section>
+  <section class="card" id="tm">
+    <h2>Timers</h2>
+    <div id="tmList"><span class="muted">No timers running.</span></div>
+    <div class="tmq"><button type="button" data-q="set a timer for 5 minutes">+5m</button><button type="button" data-q="set a timer for 10 minutes">+10m</button><button type="button" data-q="set a timer for 25 minutes">+25m</button></div>
+  </section>
+  <section class="card" id="links">
+    <h2>Quick links</h2>
+    <button type="button" class="lnk" id="openBudget"><span>Household Budget 3D</span><small>Open here · talk to Jarvis to add</small></button>
+  </section>
+  <section class="card" id="feeds" hidden>
+    <h2>Markets</h2><div id="fMarkets"></div>
+    <h2>Headlines</h2><div id="fNews"></div>
+  </section>
+</aside>
+
+<div id="dock">
+  <button id="orb" type="button" aria-label="J.A.R.V.I.S. voice: tap to talk" title="Tap to talk">
+  <canvas id="orbc" width="220" height="220"></canvas>
+  <span id="orbState">STANDBY</span>
+</button>
+  <section id="ask">
+    <div id="answer"></div>
+    <form id="askForm">
+      <input id="askInput" type="text" placeholder="Ask about your projects…" enterkeyhint="send" autocomplete="off">
+      <button type="submit" id="askGo">Ask</button>
+      <button type="button" id="askMic" title="Speak">🎤</button>
+    </form>
+    <div class="dockrow">
+    <label class="inline"><input type="checkbox" id="speak"> Read answers aloud</label>
+    <label class="voice">Voice <select id="voice" aria-label="Jarvis voice"></select></label>
+    </div>
+  </section>
+</div>
+
+<section id="budget" aria-label="Household budget" hidden>
+  <header><span>HOUSEHOLD BUDGET 3D</span><em>Tell Jarvis: &ldquo;I spent 450 on groceries&rdquo;</em><button type="button" id="budgetX" aria-label="Close budget">&times;</button></header>
+  <iframe id="budgetFrame" src="budget.html" title="Household budget"></iframe>
+</section>
+
+<aside id="panel">
+  <header>
+    <h1>Systems</h1>
+    <div id="stats">loading…</div>
+    <button type="button" id="drawerX" aria-label="Close systems">&times;</button>
+  </header>
+  <input id="search" type="search" placeholder="Search the brain…" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <div id="results"></div>
+  <section>
+    <h2>Top hubs</h2>
+    <div id="hubs"></div>
+  </section>
+
+  <section>
+    <h2>Filter</h2>
+    <div id="filters"></div>
+  </section>
+
+  <section>
+    <h2>Forces</h2>
+    <label>Repel <input id="repel" type="range" min="60" max="1200" value="300"></label>
+    <label>Link length <input id="linklen" type="range" min="15" max="150" value="45"></label>
+  </section>
+  <section>
+    <h2>Keys &amp; voice</h2>
+<details id="cfg" class="cfg"><summary>Systems &amp; keys</summary>
+    <div class="gkbox">
+      <div class="clabel2">Free AI key (Groq or Gemini)</div>
+      <input id="gkKey" type="password" placeholder="gsk_... or AIza..." autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="grow"><button type="button" id="gkSave" class="gbtn">Save key</button><button type="button" id="gkClear" class="gbtn" hidden>Remove</button></div>
+      <p id="gkStatus" class="voice"></p>
+    </div>
+    <div class="gkbox">
+      <div class="clabel2">Ollama (free AI on your own PC, offline)</div>
+      <input id="olUrl" type="url" placeholder="http://localhost:11434" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="olPick" aria-label="Ollama model" hidden></select>
+      <div class="grow"><button type="button" id="olSave" class="gbtn">Save and test</button><button type="button" id="olClear" class="gbtn" hidden>Turn off</button></div>
+      <p id="olStatus" class="voice"></p>
+    </div>
+    <div class="gkbox">
+      <div class="clabel2">ElevenLabs key (optional, realistic British Jarvis voice)</div>
+      <input id="xiKey" type="password" placeholder="ElevenLabs API key (sk_...)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="grow"><button type="button" id="xiSave" class="gbtn">Save key</button><button type="button" id="xiClear" class="gbtn" hidden>Remove</button></div>
+      <p id="xiStatus" class="voice"></p>
+    </div>
+    <div class="gkbox vsbox">
+      <div class="clabel2">VoiceStudio (your own PC, optional)</div>
+      <input id="vsUrl" type="url" placeholder="http://localhost:3900" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="vsPick" aria-label="VoiceStudio voice" hidden></select>
+      <input id="vsVoice" type="text" placeholder="Voice ID (or pick one above)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <input id="vsKey" type="password" placeholder="API key (only if you set one)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label class="inline"><input type="checkbox" id="vsListen"> Also use VoiceStudio to hear me (speech to text)</label>
+      <div class="grow"><button type="button" id="vsSave" class="gbtn">Save and test</button><button type="button" id="vsClear" class="gbtn" hidden>Remove</button></div>
+      <p id="vsStatus" class="voice"></p>
+    </div>
+    <p id="voiceStatus" class="voice" style="color:#9fb3c8">Tap the orb to talk.</p>
+    <pre id="vlog" class="voice" style="color:#7d8fa3;font:10px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;margin:4px 0 8px">Voice log appears here.</pre>
+    <label class="voice">Microphone <select id="mic" aria-label="Microphone"><option value="">Default (tap the orb to list)</option></select></label>
+    <div id="wakeBox" class="gkbox">
+      <label class="inline"><input type="checkbox" id="wakeOn"> Wake Jarvis by voice (page must stay open)</label>
+      <input id="wakePhrase" type="text" placeholder="hey jarvis" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Wake phrase">
+      <label class="inline"><input type="checkbox" id="wakeAny"> Desk mode: answer anything I say (no wake phrase)</label>
+      <p id="wakeStatus" class="voice"></p>
+    </div>
+    </details>
+  </section>
+</aside>
+
+<div id="toast"></div>
+<script src="config.js?v=46"></script>
+<script src="vendor/three.min.js?v=46"></script>
+<script src="jarvis.js?v=46"></script>
+<script src="jarvis3d.js?v=46"></script>
+<script src="app.js?v=46"></script>
+</body>
+</html>

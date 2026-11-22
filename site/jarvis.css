@@ -1,0 +1,172 @@
+/* ============================================================
+   jarvis.html layout: full Stark-style HUD
+   left column (rings, calendar, inspector) | centre reactor with the 3D brain | right column (weather, timers, feeds)
+   bottom dock (orb + ask console) | Systems drawer (search, hubs, filters, keys)
+   Loads after style.css and hud.css.
+   ============================================================ */
+:root { --lw: 296px; --rw: 300px; --top: 54px; --dockh: 164px; }
+body.jarvis { overflow: hidden; }
+
+/* graph + reactor sit in the middle; columns float above */
+body.jarvis #c { z-index: 1; }
+
+/* ---------- toolbar: centred above the graph ---------- */
+body.jarvis #bar { top: calc(var(--top) + env(safe-area-inset-top)); right: auto; left: calc(var(--lw) + 28px); }
+
+/* ---------- side columns ---------- */
+#colL, #colR {
+  position: fixed; z-index: 4; top: calc(var(--top) + env(safe-area-inset-top)); bottom: 12px; display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; scrollbar-width: none; padding: 2px;
+}
+#colL::-webkit-scrollbar, #colR::-webkit-scrollbar { display: none; }
+#colL { left: calc(12px + env(safe-area-inset-left)); width: var(--lw); }
+#colR { right: calc(12px + env(safe-area-inset-right)); width: var(--rw); }
+
+#colL .gauges { grid-template-columns: repeat(3, 1fr); gap: 4px 0; }
+#colL canvas.gc { width: 92px; height: 92px; }
+#colL .gauges figcaption { font-size: 9px; letter-spacing: .1em; }
+
+/* glass cards (same bracket treatment as the Systems drawer) */
+#colL > section, #colR > section {
+  --b: 14px; padding: 12px 14px; border: 1px solid rgba(92, 242, 255, .14); border-radius: 2px; flex: none;
+  background:
+    linear-gradient(var(--hud), var(--hud)) top left / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top left / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / 2px var(--b) no-repeat,
+    linear-gradient(180deg, rgba(4, 30, 41, .78), rgba(2, 14, 20, .86));
+  box-shadow: inset 0 0 40px rgba(92, 242, 255, .035);
+}
+#colR .muted, .wxnow .muted { color: var(--muted); }
+#colR > section[hidden] { display: none; }
+
+/* weather */
+.wxnow { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wxnow .big { font: 700 44px/1 var(--head); color: #fff; text-shadow: 0 0 14px rgba(92, 242, 255, .6); letter-spacing: .02em; }
+.wxnow .big small { font-size: 18px; color: var(--accent); vertical-align: top; }
+.wxnow .txt { font: 12px/1.4 var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.wxnow .txt b { display: block; color: var(--accent); font: 600 15px var(--head); letter-spacing: .06em; }
+.wxrow { display: grid; grid-template-columns: 54px 22px 1fr auto; align-items: center; gap: 6px; padding: 5px 0; border-top: 1px solid rgba(92, 242, 255, .1); font: 13px var(--mono); }
+.wxrow .d { color: var(--accent); letter-spacing: .1em; }
+.wxrow .g { font-variant-emoji: text; text-align: center; font-size: 17px; color: #bff8ff; }
+.wxrow .c { color: #b4e6ee; font: 500 13px var(--head); }
+.wxrow .t { color: #fff; }
+.wxrow .t i { color: var(--muted); font-style: normal; }
+
+/* timers */
+#tmList .tr { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid rgba(92, 242, 255, .1); font: 13px var(--mono); color: #bff8ff; }
+#tmList .tr b { color: var(--accent); font-weight: 400; }
+#tmList .tr:first-child { border-top: 0; }
+.tmq { display: flex; gap: 6px; margin-top: 8px; }
+.tmq button {
+  flex: 1; height: 34px; font: 600 13px var(--head); letter-spacing: .1em; color: var(--accent); cursor: pointer;
+  background: rgba(92, 242, 255, .07); border: 1px solid var(--line); border-radius: 2px;
+}
+.tmq button:active { background: rgba(92, 242, 255, .2); }
+
+/* feeds inside a card (reuse hud.css item styles) */
+body.jarvis #feeds { width: auto; overflow: visible; background: none; }
+body.jarvis #feeds h2 { margin-top: 4px; }
+#feeds h2 + div { margin-bottom: 8px; }
+
+/* google block lives in the left column now */
+#colL #google .hint { font-size: 13px; }
+#colL #compose, #colL #evcard { margin-top: 10px; }
+#colL #evcard { padding: 12px 14px; border: 1px solid var(--line); border-radius: 2px; background: rgba(3, 20, 28, .8); }
+#colL #inspector { max-height: 40vh; overflow-y: auto; scrollbar-width: none; }
+
+/* ---------- bottom dock: orb + ask console ---------- */
+#dock {
+  position: fixed; z-index: 5; bottom: calc(12px + env(safe-area-inset-bottom)); left: calc(var(--lw) + 28px); right: calc(var(--rw) + 28px);
+  min-height: var(--dockh); display: flex; align-items: center; gap: 18px; padding: 10px 18px 10px 10px;
+  border: 1px solid rgba(92, 242, 255, .16); border-radius: 2px; --b: 16px;
+  background:
+    linear-gradient(var(--hud), var(--hud)) top left / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top left / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) top right / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom left / 2px var(--b) no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / var(--b) 2px no-repeat,
+    linear-gradient(var(--hud), var(--hud)) bottom right / 2px var(--b) no-repeat,
+    linear-gradient(180deg, rgba(4, 30, 41, .95), rgba(2, 14, 20, .97));
+  backdrop-filter: blur(10px);
+}
+#dock #orb { position: relative; top: auto; right: auto; transform: none; width: 150px; flex: none; pointer-events: auto; color: var(--accent); }
+#dock #ask { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+#dock #answer { max-height: 96px; margin: 0; font-size: 15px; color: #d6fbff; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hud-dim) transparent; }
+#dock #askForm { gap: 8px; }
+.dockrow { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.dockrow label { margin: 0; }
+.dockrow label.voice { display: flex; align-items: center; gap: 8px; }
+.dockrow #voice { max-width: 250px; height: 32px; }
+
+/* ---------- Systems drawer ---------- */
+body.jarvis #panel {
+  z-index: 8; left: 0; top: 0; bottom: 0; width: 340px; padding-top: calc(16px + env(safe-area-inset-top)); border-radius: 0;
+  transform: translateX(-104%); transition: transform .25s ease;
+}
+body.jarvis #panel[data-open] { transform: none; box-shadow: 0 0 80px rgba(0, 0, 0, .8); }
+#panel header { position: relative; }
+#drawerX { position: absolute; right: 0; top: -4px; width: 40px; height: 40px; background: none; border: 0; color: var(--accent); font-size: 28px; cursor: pointer; }
+
+/* ---------- narrower screens ---------- */
+@media (max-width: 1099px) {
+  :root { --lw: 0px; --rw: 0px; }
+  #colL, #colR { display: none; }
+  body.jarvis #bar { left: 12px; }
+  #dock { left: 12px; right: 12px; }
+  #days span:nth-child(odd):not(.on) { visibility: hidden; }
+}
+@media (max-width: 759px) {
+  :root { --dockh: 0px; }
+  #dock { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
+  #dock #orb { width: 96px; align-self: center; }
+  #days { display: none; }
+  #ruler { justify-content: flex-end; }
+  body.jarvis #bar { right: 8px; left: auto; }
+}
+
+/* ---------- node graph removed from this page (the engine still runs for chat, voice, calendar, timers) ---------- */
+body.jarvis #c, #bar button:not(#btnPanel), #colL section:has(> #inspector),
+#panel #search, #panel #results, #panel section:has(> #hubs), #panel section:has(> #filters), #panel section:has(#repel) { display: none !important; }
+body.jarvis #bar { left: calc(var(--lw) + 28px); }
+
+/* ---------- 3D arc reactor (jarvis3d.js) ---------- */
+#reactor { position: fixed; z-index: 2; cursor: grab; touch-action: none; display: block; }
+#reactor:active { cursor: grabbing; }
+body.jarvis #orb {
+  position: fixed; z-index: 3; left: var(--rx, 50%); top: var(--ry, 50%); right: auto; width: var(--ow, 150px); height: var(--ow, 150px);
+  transform: translate(-50%, -50%); border-radius: 50%; margin: 0; display: block; background: none;
+}
+body.jarvis #orbc { display: none; }
+body.jarvis.no3d #orbc { display: block; width: 100%; }
+body.jarvis #orb::after {
+  content: "J.A.R.V.I.S."; position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  font: 700 clamp(9px, 1.05vw, 14px) var(--mono); letter-spacing: .28em; text-indent: .28em; color: #effeff;
+  text-shadow: 0 0 10px #5cf2ff, 0 0 24px #1fb6ff;
+}
+body.jarvis.no3d #orb::after { display: none; }
+body.jarvis #orbState { position: absolute; left: 50%; top: calc(50% + var(--rr, 200px) * 0.93); transform: translateX(-50%); white-space: nowrap; }
+body.jarvis #orb:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* quick links card */
+.lnk { display: flex; flex-direction: column; gap: 1px; padding: 9px 12px; margin-top: 2px; text-decoration: none; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 2px; background: rgba(92, 242, 255, .06); }
+.lnk span { font: 700 15px var(--head); letter-spacing: .08em; color: #fff; text-transform: uppercase; }
+.lnk small { font: 11px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+.lnk:hover, .lnk:active { background: rgba(92, 242, 255, .16); border-color: var(--accent); box-shadow: 0 0 14px rgba(92, 242, 255, .3); }
+
+/* Household budget panel */
+button.lnk { width: 100%; text-align: left; font: inherit; cursor: pointer; color: inherit; }
+#budget { position: fixed; z-index: 60; left: calc(var(--lw) + 24px); right: calc(var(--rw) + 24px); top: calc(var(--top) + 8px); bottom: 150px; display: flex; flex-direction: column; border: 1px solid var(--accent); background: rgba(3, 12, 20, .96); box-shadow: 0 0 30px rgba(92, 242, 255, .28); }
+#budget[hidden] { display: none; }
+#budget header { display: flex; align-items: center; gap: 14px; padding: 6px 12px; border-bottom: 1px solid var(--line); font: 700 14px var(--head); letter-spacing: .14em; color: var(--accent); }
+#budget header em { flex: 1; font: 11px var(--mono); letter-spacing: .06em; color: var(--muted); font-style: normal; text-transform: none; }
+#budgetX { background: none; border: 0; color: var(--accent); font-size: 26px; cursor: pointer; width: 40px; height: 36px; }
+#budgetFrame { flex: 1; width: 100%; border: 0; background: #1b1a19; }
+@media (max-width: 1099px) { #budget { left: 8px; right: 8px; } }
+@media (max-width: 759px) { #budget { top: var(--top); bottom: 0; } }

@@ -7,8 +7,8 @@ const ctx = canvas.getContext('2d');
 const panel = $('#panel');
 
 const PALETTE = {
-  router: '#4ade80', wiki: '#e5e7eb', concept: '#fbbf24', suite: '#a78bfa', skill: '#60a5fa',
-  tool: '#f472b6', world: '#fb923c', note: '#34d399', file: '#64748b'
+  router: '#5cf2ff', wiki: '#e6fbff', concept: '#ffd166', suite: '#8e9bff', skill: '#4da3ff',
+  tool: '#ff6ec7', world: '#ff9f43', note: '#3dffb5', file: '#5b7c8a'
 };
 function colorFor(t) {
   if (PALETTE[t]) return PALETTE[t];
@@ -28,6 +28,7 @@ const isMobile = () => window.innerWidth < 760;
 // 3D camera: yaw/pitch rotate the cloud, f is the perspective distance. S.flat = classic 2D view.
 const cam = { yaw: 0.6, pitch: -0.3, f: 700, last: 0, m: { cy: 1, sy: 0, cp: 1, sp: 0 } };
 S.flat = false;
+window.BRAIN_STATE = S; window.BRAIN_CAM = cam;   // read by hud.js for the gauges and the HUD background
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -62,6 +63,8 @@ function resize() {
 }
 function usable() {
   const r = { x0: 0, y0: 0, x1: S.W, y1: S.H };
+  if (window.BRAIN_USABLE) { const u = window.BRAIN_USABLE(); if (u) return u; }   // jarvis.html lays out its own HUD
+  if (!isMobile()) { r.y0 = 52; const rl = document.getElementById('rail'); if (rl) r.x1 = rl.getBoundingClientRect().left - 8; }
   if (!panel.classList.contains('closed')) {
     const b = panel.getBoundingClientRect();
     if (!isMobile()) r.x0 = b.right + 8;
@@ -72,6 +75,14 @@ function usable() {
 
 /* ---------- data ---------- */
 function init(g) {
+  // hide any note whose title mentions PCCP (the vault keeps it); rebuild the links and link counts without it
+  {
+    const keep = g.nodes.map((n) => !/PCCP/i.test(n.title)), map = []; let c = 0;
+    keep.forEach((k, i) => { map[i] = k ? c++ : -1; });
+    const links = g.links.filter(([a, b]) => keep[a] && keep[b]).map(([a, b]) => [map[a], map[b]]);
+    const deg = new Array(c).fill(0); links.forEach(([a, b]) => { deg[a]++; deg[b]++; });
+    g = { ...g, links, nodes: g.nodes.filter((_, i) => keep[i]).map((n, i) => ({ ...n, degree: deg[i] })) };
+  }
   S.nodes = g.nodes.map((n, i) => ({
     ...n, i, x: (Math.random() - 0.5) * 400, y: (Math.random() - 0.5) * 400, z: (Math.random() - 0.5) * 400, vx: 0, vy: 0, vz: 0,
     r: 3 + Math.sqrt(n.degree) * 1.8, color: colorFor(n.type), pinned: false
@@ -186,14 +197,14 @@ function draw() {
   ctx.lineWidth = 1;
   bands.forEach((arr, b) => {
     if (!arr.length) return;
-    ctx.strokeStyle = `rgba(130,170,160,${flat ? base * 0.8 : base * (0.35 + 0.65 * (b + 1) / 4)})`;
+    ctx.strokeStyle = `rgba(92,242,255,${flat ? base * 0.8 : base * (0.35 + 0.65 * (b + 1) / 4)})`;
     ctx.beginPath();
     for (let i = 0; i < arr.length; i += 2) { ctx.moveTo(arr[i].sx, arr[i].sy); ctx.lineTo(arr[i + 1].sx, arr[i + 1].sy); }
     ctx.stroke();
   });
   if (focus) {
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(180,230,210,0.6)';
+    ctx.strokeStyle = 'rgba(170,250,255,0.85)';
     ctx.beginPath();
     const p = S.nodes[S.sel];
     for (const j of S.adj[S.sel]) {
@@ -238,7 +249,7 @@ function draw() {
       ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, 6.2832); ctx.stroke();
     } else if (S.cited.has(n.i)) {
       ctx.lineWidth = 2.5;
-      ctx.strokeStyle = '#4ade80';
+      ctx.strokeStyle = '#5cf2ff';
       ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 4, 0, 6.2832); ctx.stroke();
     }
   }
@@ -250,19 +261,39 @@ function draw() {
   ctx.textBaseline = 'top';
   ctx.lineJoin = 'round';
   ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(7,9,13,0.9)';
+  ctx.strokeStyle = 'rgba(2,8,12,0.92)';
   for (const n of order.slice().reverse()) {                 // near first
     const special = n.i === S.sel || S.pathSet.has(n.i) || S.cited.has(n.i) || (focus && S.nb.has(n.i));
     if (!special && (focus || n.rank >= count)) continue;
     if (!special && !flat && near(n.pz) < 0.25) continue;     // skip labels on the far side
-    ctx.font = `${Math.round(12 * (flat ? 1 : Math.min(1.15, Math.max(0.8, n.ps))))}px -apple-system, system-ui, sans-serif`;
+    ctx.font = `${Math.round(12 * (flat ? 1 : Math.min(1.15, Math.max(0.8, n.ps))))}px Rajdhani, -apple-system, system-ui, sans-serif`;
     ctx.globalAlpha = special ? 1 : fog(n.pz);
-    ctx.fillStyle = special ? '#fff' : 'rgba(230,233,239,0.9)';
+    ctx.fillStyle = special ? '#fff' : 'rgba(190,248,255,0.92)';
     const ty = n.sy + Math.max(1.5, n.r * n.ps * k) + 2;
     ctx.strokeText(n.title, n.sx, ty);
     ctx.fillText(n.title, n.sx, ty);
   }
   ctx.globalAlpha = 1;
+
+  // HUD target-lock reticle on the selected note
+  if (focus && S.nodes[S.sel] && !hiddenNode(S.sel)) {
+    const n = S.nodes[S.sel], R = Math.max(1.5, n.r * n.ps * k) + 9, t = performance.now() / 1000, L = 7;
+    ctx.save();
+    ctx.translate(n.sx, n.sy);
+    ctx.strokeStyle = 'rgba(92,242,255,0.95)'; ctx.lineWidth = 1.5;
+    ctx.rotate(t * 0.6);
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.arc(0, 0, R + 5, 0, 6.2832); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.rotate(-t * 0.6);
+    ctx.beginPath();
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      ctx.moveTo(sx * R, sy * (R - L)); ctx.lineTo(sx * R, sy * R); ctx.lineTo(sx * (R - L), sy * R);
+    }
+    ctx.stroke();
+    ctx.restore();
+    S.dirty = true;                                          // keep the reticle turning
+  }
 }
 
 function animate() {
@@ -441,7 +472,7 @@ $('#search').addEventListener('input', (e) => {
 /* ---------- J.A.R.V.I.S. orb ---------- */
 const orb = (() => {
   const btn = $('#orb'), cv = $('#orbc'), label = $('#orbState'), g2 = cv.getContext('2d');
-  const COL = { idle: [74, 222, 128], listening: [56, 189, 248], thinking: [251, 191, 36], speaking: [74, 222, 128] };
+  const COL = { idle: [92, 242, 255], listening: [120, 190, 255], thinking: [255, 196, 70], speaking: [92, 242, 255] };
   const NAME = { idle: 'STANDBY', listening: 'LISTENING', thinking: 'THINKING', speaking: 'SPEAKING' };
   let state = 'idle', t0 = performance.now(), level = 0, hold = 0;
   function set(s) {
@@ -479,6 +510,10 @@ const orb = (() => {
     g2.beginPath(); g2.arc(c, c, c * 0.72, t * spin + 3.3, t * spin + 4.4); g2.stroke();
     g2.lineWidth = 3; g2.strokeStyle = rgb(0.75);
     g2.beginPath(); g2.arc(c, c, c * 0.56, -t * spin * 1.4, -t * spin * 1.4 + 2.2); g2.stroke();
+    g2.save(); g2.lineWidth = 2; g2.strokeStyle = rgb(0.35); g2.setLineDash([2, 7]);
+    g2.beginPath(); g2.arc(c, c, c * 0.82, -t * spin * 0.3, -t * spin * 0.3 + 6.2832); g2.stroke(); g2.restore();
+    g2.lineWidth = 4; g2.strokeStyle = 'rgba(255,77,77,0.85)';
+    g2.beginPath(); g2.arc(c, c, c * 0.64, t * spin * 0.7 + 5.2, t * spin * 0.7 + 5.55); g2.stroke();
     // inner ring that breathes with the voice
     g2.lineWidth = 2; g2.strokeStyle = rgb(0.5 + 0.4 * level);
     g2.beginPath(); g2.arc(c, c, c * (0.36 + 0.07 * level), 0, 6.2832); g2.stroke();
@@ -2050,6 +2085,7 @@ const svc = (() => {
   }
   // ---- register services here: { match(question) -> bool, run(question) -> Promise<string> } ----
   const SERVICES = [
+    { match: (q) => !!(window.JV_SERVICE && window.JV_SERVICE.match(q)), run: (q) => window.JV_SERVICE.run(q) },   // jarvis.html: household budget
     { match: isTimerCancel, run: timerCancel },
     { match: isTimerList, run: timerList },
     { match: isTimerCmd, run: timerAdd },

@@ -8,10 +8,19 @@
 <meta name="apple-mobile-web-app-title" content="Brain">
 <meta name="theme-color" content="#07090d">
 <title>Brain Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
 <link rel="stylesheet" href="style.css?v=45">
+<link rel="stylesheet" href="hud.css?v=45">
 </head>
 <body>
+<canvas id="hudbg"></canvas>
 <canvas id="c"></canvas>
+
+<div id="ruler" aria-hidden="true">
+  <div id="days"></div>
+  <div id="clock"><b id="clockT">--:--</b><span id="clockD"></span></div>
+</div>
 
 <div id="bar">
   <button id="btnPanel" title="Panel" aria-label="Toggle panel">☰</button>
@@ -20,10 +29,24 @@
   <button id="btnPath" title="Path mode: tap two notes to trace the route" aria-pressed="false">Path</button>
 </div>
 
+
+<div id="rail">
 <button id="orb" type="button" aria-label="J.A.R.V.I.S. voice: tap to talk" title="Tap to talk">
   <canvas id="orbc" width="220" height="220"></canvas>
   <span id="orbState">STANDBY</span>
 </button>
+  <div class="gauges" aria-hidden="true">
+    <figure><canvas class="gc" data-k="time"></canvas><figcaption>LOCAL TIME</figcaption></figure>
+    <figure><canvas class="gc" data-k="date"></canvas><figcaption id="capDate">DATE</figcaption></figure>
+    <figure><canvas class="gc" data-k="notes"></canvas><figcaption>NOTES ONLINE</figcaption></figure>
+    <figure><canvas class="gc" data-k="links"></canvas><figcaption>CONNECTIONS</figcaption></figure>
+  </div>
+  <div class="lock" id="lock" aria-live="polite">TARGET LOCK <b>NONE</b></div>
+  <div class="feeds" id="feeds" hidden>
+    <div class="fh">MARKETS</div><div id="fMarkets"></div>
+    <div class="fh">HEADLINES</div><div id="fNews"></div>
+  </div>
+</div>
 
 <aside id="panel">
   <header>
@@ -44,6 +67,7 @@
     </form>
     <label class="inline"><input type="checkbox" id="speak"> Read answers aloud</label>
     <label class="voice">Voice <select id="voice" aria-label="Jarvis voice"></select></label>
+    <details id="cfg" class="cfg"><summary>Systems &amp; keys</summary>
     <div class="gkbox">
       <div class="clabel2">Free AI key (Groq or Gemini)</div>
       <input id="gkKey" type="password" placeholder="gsk_... or AIza..." autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -82,6 +106,7 @@
       <label class="inline"><input type="checkbox" id="wakeAny"> Desk mode: answer anything I say (no wake phrase)</label>
       <p id="wakeStatus" class="voice"></p>
     </div>
+    </details>
     <div id="evcard" hidden>
       <div class="clabel">Calendar event (nothing is added until you tap Add)</div>
       <input id="eTitle" type="text" placeholder="Title" autocomplete="off">
@@ -142,6 +167,7 @@
 <div id="toast"></div>
 <script src="config.js?v=45"></script>
 <script src="app.js?v=45"></script>
+<script src="hud.js?v=45"></script>
 <script>
 /* self-update: if Safari served an old copy of this page, reload once with a fresh address */
 (function () { try {
