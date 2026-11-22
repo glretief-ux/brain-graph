@@ -265,7 +265,7 @@ function dateFrom(clause,today){
   if(/\btoday\b|\bthis morning\b|\btonight\b/.test(clause))return {iso:iso(today),cut:/today|this morning|tonight/};
   return null;
 }
-var STOP=/\b(i|we|my|our|the|a|an|of|to|on|for|from|at|in|just|spent|spend|paid|pay|bought|buy|got|get|received|receive|earned|earn|add|added|expense|income|cost|me|was|were|is|rands?|euros?|dollars?|pounds?|bucks|and|with|today|yesterday|please|new)\b/g;
+var STOP=/\b(i|we|my|our|the|a|an|of|to|on|for|from|at|in|just|spent|spend|paid|pay|bought|buy|got|get|received|receive|earned|earn|add|added|expenses?|incomes?|cost|me|was|were|is|rands?|euros?|dollars?|pounds?|bucks|and|with|today|yesterday|please|new)\b/g;
 function parseEntries(text,today){
   var clauses=text.toLowerCase().split(/\s*(?:,(?!\d{3}\b)|;|\band then\b|\bthen\b|\balso\b|\band\b)\s*/);
   var out=[];
@@ -427,7 +427,8 @@ function renderAll(){
 }
 function sendSummary(){
   try{if(parent!==window){var t=totals(S.month),top=Object.keys(t.by).sort(function(a,c){return t.by[c]-t.by[a]}).slice(0,3).map(function(k){return {cat:k,amt:t.by[k],bud:S.budgets[k]||0}});
-    parent.postMessage({jv:'summary',cur:S.currency,month:mLabel(S.month,true),inc:t.inc,exp:t.exp,top:top,sample:!!S.sample},location.origin)}}catch(e){}
+    var rec=S.tx.slice().sort(function(a,c){return a.date<c.date?1:a.date>c.date?-1:c.id-a.id}).slice(0,5).map(function(x){return {type:x.type,cat:x.cat,note:x.note,amt:x.amount,date:x.date}});
+    parent.postMessage({jv:'summary',recent:rec,cur:S.currency,month:mLabel(S.month,true),inc:t.inc,exp:t.exp,top:top,sample:!!S.sample},location.origin)}}catch(e){}
 }
 function commit(){save();renderAll()}
 

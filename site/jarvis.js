@@ -299,6 +299,14 @@
     const l = $b('budLeft'); l.textContent = fmt(d.cur, left); l.classList.toggle('neg', left < 0);
     $b('budSav').textContent = sav + '%';
     const bar = $b('budBar'); bar.style.width = Math.min(100, d.inc ? d.exp / d.inc * 100 : 0) + '%'; bar.classList.toggle('over', d.exp > d.inc);
+    const R = $b('budRecent');
+    if (R) R.replaceChildren(...(d.recent || []).map((t) => {
+      const r = document.createElement('div'); r.className = 're' + (t.type === 'income' ? ' inc' : '');
+      const b = document.createElement('b'); b.textContent = t.note || t.cat;
+      const s = document.createElement('small'); s.textContent = t.cat + ' · ' + String(t.date).slice(5).replace('-', '/');
+      const a = document.createElement('span'); a.textContent = (t.type === 'income' ? '+' : '−') + fmt(d.cur, t.amt);
+      r.append(b, s, a); return r;
+    }));
     $b('budTop').replaceChildren(...d.top.map((t) => { const r = document.createElement('div'); r.textContent = t.cat; const s = document.createElement('span'); s.textContent = fmt(d.cur, t.amt) + (t.bud ? ' / ' + fmt(d.cur, t.bud) : ''); r.append(s); return r; }));
   }
   $b('budForm').addEventListener('submit', async (e) => {
@@ -315,7 +323,7 @@
       s.tx.forEach((t) => { if (String(t.date).slice(0, 7) !== mk) return; if (t.type === 'income') inc += t.amount; else { exp += t.amount; by[t.cat] = (by[t.cat] || 0) + t.amount; } });
       const MN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
       const top = Object.keys(by).sort((a, c) => by[c] - by[a]).slice(0, 3).map((k) => ({ cat: k, amt: by[k], bud: (s.budgets || {})[k] || 0 }));
-      summary({ cur: s.currency || 'R', month: MN[+mk.slice(5, 7) - 1] + ' ' + mk.slice(0, 4), inc, exp, top, sample: !!s.sample && s.tx.some((t) => t.sample) });
+      summary({ recent: s.tx.slice().sort((a, c) => (a.date < c.date ? 1 : a.date > c.date ? -1 : c.id - a.id)).slice(0, 5).map((x) => ({ type: x.type, cat: x.cat, note: x.note, amt: x.amount, date: x.date })), cur: s.currency || 'R', month: MN[+mk.slice(5, 7) - 1] + ' ' + mk.slice(0, 4), inc, exp, top, sample: !!s.sample && s.tx.some((t) => t.sample) });
     } catch (e) { $b('budMonth').textContent = 'Budget unavailable'; }
   }
   fromStorage(); setInterval(fromStorage, 2000); addEventListener('storage', fromStorage);
