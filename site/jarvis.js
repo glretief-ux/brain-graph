@@ -282,7 +282,10 @@
 (() => {
   const box = document.getElementById('budget'), frame = document.getElementById('budgetFrame');
   if (!box || !frame) return;
-  const open = (v) => { box.hidden = !v; document.body.classList.toggle('budget-open', v); };
+  const ping = () => { try { frame.contentWindow.postMessage({ jv: 'ping' }, location.origin); } catch (e) {} };
+  const open = (v) => { box.hidden = !v; document.body.classList.toggle('budget-open', v); if (v) { ping(); setTimeout(() => { try { frame.contentWindow.postMessage({ jv: 'show' }, location.origin); } catch (e) {} ping(); }, 200); } };
+  frame.addEventListener('load', () => { ping(); setTimeout(ping, 600); });
+  setInterval(ping, 4000);
   document.getElementById('openBudget')?.addEventListener('click', () => open(true));
   document.getElementById('budgetX').addEventListener('click', () => open(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) open(false); });

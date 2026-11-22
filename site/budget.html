@@ -423,6 +423,9 @@ function renderAll(){
   renderSlicers();renderKpis();renderBudgets();renderLegend();renderTable();
   $('#sample').classList.toggle('on',!!S.sample&&S.tx.some(function(t){return t.sample}));
   if(bars)bars.rebuild();if(donut)donut.rebuild();
+  sendSummary();
+}
+function sendSummary(){
   try{if(parent!==window){var t=totals(S.month),top=Object.keys(t.by).sort(function(a,c){return t.by[c]-t.by[a]}).slice(0,3).map(function(k){return {cat:k,amt:t.by[k],bud:S.budgets[k]||0}});
     parent.postMessage({jv:'summary',cur:S.currency,month:mLabel(S.month,true),inc:t.inc,exp:t.exp,top:top,sample:!!S.sample},location.origin)}}catch(e){}
 }
@@ -693,7 +696,7 @@ var input=$('#cmd');
 var capture=null,_say=say;
 say=function(who,text){if(capture&&who==='bot'&&!/^Working that out/.test(text))capture.push(text);return _say(who,text)};
 window.addEventListener('message',function(e){
-  var d=e.data;if(!d||d.jv!=='cmd'||e.origin!==location.origin||!e.source)return;
+  var d=e.data;if(d&&d.jv==='ping'&&e.origin===location.origin){sendSummary();return}if(d&&d.jv==='show'&&e.origin===location.origin){window.dispatchEvent(new Event('resize'));stages.forEach(function(s){s.visible=true});renderAll();return}if(!d||d.jv!=='cmd'||e.origin!==location.origin||!e.source)return;
   capture=[];
   Promise.resolve(handle(String(d.text||''))).catch(function(){}).then(function(){
     var out=capture.join(' ')||'Done.';capture=null;

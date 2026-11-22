@@ -162,8 +162,8 @@ body.jarvis #orb:focus-visible { outline: 2px solid var(--accent); outline-offse
 
 /* Household budget panel */
 button.lnk { width: 100%; text-align: left; font: inherit; cursor: pointer; color: inherit; }
-#budget { position: fixed; z-index: 60; left: calc(var(--lw) + 24px); right: calc(var(--rw) + 24px); top: calc(var(--top) + 8px); bottom: 150px; display: flex; flex-direction: column; border: 1px solid var(--accent); background: rgba(3, 12, 20, .96); box-shadow: 0 0 30px rgba(92, 242, 255, .28); }
-#budget[hidden] { display: none; }
+#budget { position: fixed; z-index: 60; left: calc(var(--lw) + 24px); right: calc(var(--rw) + 24px); top: calc(var(--top) + 8px); bottom: 14px; display: flex; flex-direction: column; border: 1px solid var(--accent); background: rgba(3, 12, 20, .96); box-shadow: 0 0 30px rgba(92, 242, 255, .28); }
+#budget[hidden] { display: flex !important; visibility: hidden; pointer-events: none; left: -300vw; right: auto; width: 900px; }
 #budget header { display: flex; align-items: center; gap: 14px; padding: 6px 12px; border-bottom: 1px solid var(--line); font: 700 14px var(--head); letter-spacing: .14em; color: var(--accent); }
 #budget header em { flex: 1; font: 11px var(--mono); letter-spacing: .06em; color: var(--muted); font-style: normal; text-transform: none; }
 #budgetX { background: none; border: 0; color: var(--accent); font-size: 26px; cursor: pointer; width: 40px; height: 36px; }
