@@ -174,8 +174,8 @@
     ring(c, X, X - 24, 9, frac, 0.92);
     if (inner != null) ring(c, X, X - 40, 4, inner, 0.6); else { c.strokeStyle = rgba(0.18); c.lineWidth = 1; c.beginPath(); c.arc(X, X, X - 40, 0, TAU); c.stroke(); }
     c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = rgba(1); c.shadowColor = rgba(0.8); c.shadowBlur = 10;
-    c.font = `700 ${big.length > 4 ? 26 : 38}px Rajdhani, system-ui, sans-serif`; c.fillText(big, X, X - 6);
-    c.shadowBlur = 0; c.fillStyle = rgba(0.6); c.font = '600 16px "Share Tech Mono", ui-monospace, monospace'; c.fillText(sub, X, X + 24);
+    c.font = `700 ${big.length > 4 ? 42 : big.length > 3 ? 50 : 58}px Rajdhani, system-ui, sans-serif`; c.fillText(big, X, X - 8);
+    c.shadowBlur = 0; c.fillStyle = rgba(0.6); c.font = '600 20px "Share Tech Mono", ui-monospace, monospace'; c.fillText(sub, X, X + 34);
   }
 
   /* ---------- weather (Open-Meteo, no key). Place = the engine's saved home, else browser location, else IP ---------- */
@@ -331,15 +331,12 @@
     match: (q) => (/\bbudget\b/i.test(q) || (MONEY.test(q) && /\d/.test(q)) || /\bhow much (?:did|have) i (?:spend|spent|earn)/i.test(q)) && !NOT.test(q),
     run: async (q) => {
       open(true);
-      const ans = document.getElementById('answer');
-      ans.textContent = 'Checking the budget…';
       const id = ++seq;
       const text = await new Promise((res) => {
         waits.set(id, res); setTimeout(() => { if (waits.delete(id)) res('The budget did not answer in time.'); }, 6000);
         frame.contentWindow.postMessage({ jv: 'cmd', id, text: q }, location.origin);
       });
-      ans.textContent = text;
-      return true;
+      return text;
     }
   };
 })();
