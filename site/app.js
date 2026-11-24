@@ -1174,6 +1174,7 @@ const voiceBox = (() => {
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
+      try { wake.pause(true); setTimeout(() => wake.pause(false), 6000); } catch (e) {}   // the voice test must not compete with a live microphone
       if (koOn()) { koDown = false; lsSet('brain.koIOS', '2'); speakKO('At your service, sir.', () => {}, () => {}, () => {}); return; }
       if (xiOn()) { speakXI('At your service.', () => {}, () => {}, () => {}); return; }
       if (vsOn()) { speakVS('At your service.', () => {}, () => {}, () => {}); return; }
