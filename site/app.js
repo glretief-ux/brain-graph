@@ -969,7 +969,7 @@ const voiceBox = (() => {
   const XI_DANIEL = 'onwK4e9ZLuTAKqWW03F9';                               // ElevenLabs premade British male voice: calm, formal, butler-like
   let xiDown = false;
   const KOV = '__ko';                                                    // Kokoro voice running on this device (free, no limits, same family as the PC Jarvis voice)
-  const koVoice = () => { try { return localStorage.getItem('brain.koVoice') || 'bm_george'; } catch (e) { return 'bm_george'; } };
+  const koVoice = () => { try { return localStorage.getItem('brain.koVoice') || 'af_heart'; } catch (e) { return 'af_heart'; } };
   let koDown = false, koP = null, koChecked = false;
   const koIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
@@ -1161,6 +1161,16 @@ const voiceBox = (() => {
     if (!('speechSynthesis' in window)) { const l = document.querySelector('label.voice'); if (l) l.style.display = 'none'; return; }
     load();
     speechSynthesis.addEventListener('voiceschanged', load);
+    { const kv = document.getElementById('koVoice'), kw = document.getElementById('koWrap');
+      if (kv) {
+        kv.value = koVoice();
+        const sync = () => { if (kw) kw.hidden = !koOn(); };
+        sel().addEventListener('change', sync); setTimeout(sync, 0);
+        kv.addEventListener('change', () => {
+          lsSet('brain.koVoice', kv.value); speechSynthesis.cancel(); stop(); unlock(); koDown = false;
+          speakKO('Hello. This is my new voice.', () => {}, () => {}, () => {});
+        });
+      } }
     sel().addEventListener('change', () => {
       try { localStorage.setItem(KEY, sel().value); } catch (e) {}
       speechSynthesis.cancel(); stop(); unlock();
