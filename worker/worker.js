@@ -210,9 +210,8 @@ ${contacts || "(none)"}`;
       const text = String(body.speak).slice(0, 600);
       const speaker = String(body.speaker || "draco").toLowerCase().replace(/[^a-z]/g, "").slice(0, 20) || "draco";
       try {
-        const out = body.engine === "melo"
-          ? await env.AI.run("@cf/myshell-ai/melotts", { prompt: text, lang: "en" })        // very cheap: fits the free plan all day
-          : await env.AI.run(env.TTS_MODEL || "@cf/deepgram/aura-2-en", { text, speaker, encoding: "mp3" });
+        // MeloTTS was retired by Cloudflare on 2026-11-20; Aura-2 is the official replacement for both voices
+        const out = await env.AI.run(env.TTS_MODEL || "@cf/deepgram/aura-2-en", { text, speaker, encoding: "mp3" });
         let payload = out;
         if (out instanceof Response) payload = out.body;
         else if (out && typeof out === "object" && typeof out.audio === "string") {

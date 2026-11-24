@@ -939,6 +939,7 @@ function retrieve(question) {
 }
 
 function renderAnswer(text) {
+  text = String(text).replace(/\*\*|__/g, '').replace(/^\s*[*]\s+/gm, '- ');   // drop markdown bold markers
   const box = $('#answer');
   box.replaceChildren();
   try { panel.classList.remove('closed'); box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}   // make sure the answer is on screen
@@ -1182,7 +1183,7 @@ function say(text) {
   { const vs = document.getElementById('voice'), vn = vs && vs.selectedOptions && vs.selectedOptions[0] ? vs.selectedOptions[0].textContent : 'the device voice';
     vlog('answer: voice "' + vn + '", "read aloud" ' + ($('#speak').checked ? 'on' : 'off')); }
   if (!$('#speak').checked) return;
-  const clean = text.replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
+  const clean = text.replace(/\*\*|__|`/g, '').replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
   if (voiceBox.koOn()) {
