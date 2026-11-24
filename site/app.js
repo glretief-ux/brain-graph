@@ -1201,6 +1201,14 @@ function say(text) {
   { const vs = document.getElementById('voice'), vn = vs && vs.selectedOptions && vs.selectedOptions[0] ? vs.selectedOptions[0].textContent : 'the device voice';
     vlog('answer: voice "' + vn + '", "read aloud" ' + ($('#speak').checked ? 'on' : 'off')); }
   if (!$('#speak').checked) return;
+  try {
+    wake.pause(true);
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const talking = voiceBox.busy() || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending));
+      if ((!talking && Date.now() - t0 > 2500) || Date.now() - t0 > 60000) { clearInterval(iv); wake.pause(false); }
+    }, 400);
+  } catch (e) {}
   const clean = text.replace(/\*\*|__|`/g, '').replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
@@ -2591,7 +2599,10 @@ const wake = (() => {
     if (wst) { const st = wst; st.stop = true; try { if (st.stream) st.stream.getTracks().forEach((t) => t.stop()); } catch (e) {} try { if (st.ctx) st.ctx.close(); } catch (e) {} await new Promise((r) => setTimeout(r, 250)); }
   }
   function stopRec() { const r = rec; rec = null; running = false; if (r) { try { r.abort(); } catch (e) {} } }
+  let paused = false;
+  function pause(v) { paused = !!v; if (paused) { stopRec(); stopW(); release(); } else tick(); }   // free the microphone while Jarvis speaks (iPad mutes speech while a mic is live)
   function tick() {
+    if (paused) return;
     if (!enabled) { stopRec(); stopW(); return; }
     if ((!SRW || srBroken) && wCapable()) { if (convo.isOn()) { stopW(); return; } if (!wst && !document.hidden && Date.now() > wRetryAt) { if (isIOS && !gestured) { if (!/Tap the page/.test(status)) say3('Tap the page once to start listening.'); } else startW(); } return; }
     if (busy()) { if (rec) stopRec(); return; }
@@ -2624,7 +2635,7 @@ const wake = (() => {
     if (enabled) document.addEventListener('click', function once() { document.removeEventListener('click', once); voiceBox.unlock(); tick(); }, { once: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-  return { split, matcher, norm, release };
+  return { split, matcher, norm, release, pause };
 })();
 
 /* ---------- Free AI key (stored only in this browser) ---------- */
