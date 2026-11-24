@@ -194,3 +194,5 @@ button.lnk { width: 100%; text-align: left; font: inherit; cursor: pointer; colo
 #budRecent .re small { grid-column: 1; font: 10px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
 #budRecent .re span { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 700 14px var(--head); color: #ff8a8a; }
 #budRecent .re.inc span { color: #6dffc0; }
+
+#koWrap[hidden]{display:none !important}

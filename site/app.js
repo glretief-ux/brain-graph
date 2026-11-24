@@ -1221,22 +1221,29 @@ function say(text) {
     return;
   }
   if (voiceBox.aiOn()) {
-    voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => {
-      let t = clean.slice(0, 320); const k = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (clean.length > t.length && k > 80) t = t.slice(0, k + 1);
-      if (!voiceBox.useKO(t, () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean))) speakLocal(clean);
-    });
+    voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
     return;
   }
   speakLocal(clean);
 }
+// iOS only lets a page use the device voice after it has spoken once inside a tap: prime it silently on the first tap or key press
+(() => {
+  const prime = () => {
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {}
+    ['pointerdown', 'touchend', 'keydown', 'click'].forEach((t) => document.removeEventListener(t, prime, true));
+  };
+  if ('speechSynthesis' in window) ['pointerdown', 'touchend', 'keydown', 'click'].forEach((t) => document.addEventListener(t, prime, true));
+})();
 function speakLocal(clean) {
-  if (!('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
+  if (!('speechSynthesis' in window)) { vlog('voice: this browser has no device voice'); return; }
+  speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch (e) {}
+  vlog('voice: speaking with the device voice');
   const u = new SpeechSynthesisUtterance(clean);
   const v = voiceBox.current(); if (v) { u.voice = v; u.lang = v.lang; }
   u.rate = 0.95;
   u.onstart = () => orb.set('speaking');
-  u.onend = u.onerror = () => orb.set('idle');
+  u.onend = () => orb.set('idle');
+  u.onerror = (e) => { orb.set('idle'); vlog('voice: device voice error ' + (e && e.error)); };
   speechSynthesis.speak(u);
 }
 
