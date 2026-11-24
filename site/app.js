@@ -981,7 +981,9 @@ const voiceBox = (() => {
   let busyAI = false, unlocked = false, aiDown = false, proDown = false, token = 0;
   // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
   const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+  const playback = () => { try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {} };   // iOS 17+: speak even when the ringer switch is on silent, and treat the page as media, not a call
   const unlock = () => {
+    playback();
     const c = getCtx(); if (c) { try { c.resume(); const b = c.createBuffer(1, 1, 22050), n = c.createBufferSource(); n.buffer = b; n.connect(c.destination); n.start(0); } catch (e) {} }
     if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {}
   };
@@ -1244,6 +1246,7 @@ function say(text) {
   if ('speechSynthesis' in window) ['pointerdown', 'touchend', 'keydown', 'click'].forEach((t) => document.addEventListener(t, prime, true));
 })();
 function speakLocal(clean) {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   if (!('speechSynthesis' in window)) { vlog('voice: this browser has no device voice'); return; }
   speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch (e) {}
   vlog('voice: speaking with the device voice');
