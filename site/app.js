@@ -1245,18 +1245,30 @@ function say(text) {
   };
   if ('speechSynthesis' in window) ['pointerdown', 'touchend', 'keydown', 'click'].forEach((t) => document.addEventListener(t, prime, true));
 })();
-function speakLocal(clean) {
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+async function speakLocal(clean) {
   if (!('speechSynthesis' in window)) { vlog('voice: this browser has no device voice'); return; }
+  try { await wake.release(); } catch (e) {}                              // the microphone must be fully closed first: a live mic silences iPad speech
+  await new Promise((r) => setTimeout(r, 400));
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
   speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch (e) {}
-  vlog('voice: speaking with the device voice');
-  const u = new SpeechSynthesisUtterance(clean);
-  const v = voiceBox.current(); if (v) { u.voice = v; u.lang = v.lang; }
-  u.rate = 0.95;
-  u.onstart = () => orb.set('speaking');
-  u.onend = () => orb.set('idle');
-  u.onerror = (e) => { orb.set('idle'); vlog('voice: device voice error ' + (e && e.error)); };
-  speechSynthesis.speak(u);
+  const go = (withVoice, attempt) => {
+    const u = new SpeechSynthesisUtterance(clean);
+    const v = voiceBox.current();
+    if (withVoice && v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-GB';
+    u.rate = 0.95; u.volume = 1;
+    let started = false;
+    u.onstart = () => { started = true; orb.set('speaking'); vlog('voice: device voice started' + (withVoice && v ? ' (' + v.name + ')' : ' (default voice)')); };
+    u.onend = () => { orb.set('idle'); vlog('voice: device voice finished'); };
+    u.onerror = (e) => { orb.set('idle'); vlog('voice: device voice error ' + (e && e.error)); };
+    vlog('voice: speaking with the device voice (try ' + attempt + ')');
+    speechSynthesis.speak(u);
+    setTimeout(() => {
+      if (started || speechSynthesis.speaking) return;
+      vlog('voice: the iPad did not start speaking' + (attempt < 2 ? ', retrying with its default voice' : ''));
+      if (attempt < 2) { speechSynthesis.cancel(); go(false, attempt + 1); }
+    }, 2500);
+  };
+  go(true, 1);
 }
 
 /* ---------- Google: Calendar + Gmail (read only, signed in inside your browser, nothing saved) ---------- */
