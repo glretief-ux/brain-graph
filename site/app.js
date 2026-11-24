@@ -1184,7 +1184,15 @@ const voiceBox = (() => {
       speechSynthesis.speak(u);
     });
   };
-  return { init, current, aiOn, vsOn, koOn, speakKO, xiOn, xiReset: () => { xiDown = false; }, cap, speakAI, speakVS, speakXI, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
+  // when the Cloudflare voice is down, switch to the free on-device Kokoro voice (if it has not crashed Safari before)
+  const useKO = (text, onstart, onend, onfail) => {
+    if (lsGet('brain.koBad') === '1' || koDown || !sel()) return false;
+    sel().value = KOV; lsSet(KEY, KOV); lsSet('brain.koIOS', '2'); koDown = false;
+    const kw = document.getElementById('koWrap'); if (kw) kw.hidden = false;
+    vlog('voice: Cloudflare voice is down, switching to the Kokoro voice on this device');
+    speakKO(text, onstart, onend, onfail); return true;
+  };
+  return { useKO, init, current, aiOn, vsOn, koOn, speakKO, xiOn, xiReset: () => { xiDown = false; }, cap, speakAI, speakVS, speakXI, stop, unlock, reload: load, select: (v) => { if (sel()) { sel().value = v; try { localStorage.setItem(KEY, v); } catch (e) {} } }, busy: () => busyAI };
 })();
 
 // Small on-screen voice log: a photo of it shows exactly how far a voice request got
@@ -1213,7 +1221,10 @@ function say(text) {
     return;
   }
   if (voiceBox.aiOn()) {
-    voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean));
+    voiceBox.speakAI(clean.slice(0, voiceBox.cap()), () => orb.set('speaking'), () => orb.set('idle'), () => {
+      let t = clean.slice(0, 320); const k = Math.max(t.lastIndexOf('. '), t.lastIndexOf('? '), t.lastIndexOf('! ')); if (clean.length > t.length && k > 80) t = t.slice(0, k + 1);
+      if (!voiceBox.useKO(t, () => orb.set('speaking'), () => orb.set('idle'), () => speakLocal(clean))) speakLocal(clean);
+    });
     return;
   }
   speakLocal(clean);

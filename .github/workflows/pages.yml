@@ -36,7 +36,7 @@ jobs:
         run: python scripts/fetch_markets.py site/markets.json
         continue-on-error: true
       - name: Cache-bust scripts and styles so Safari always loads the newest files
-        run: sed -i "s/?v=[0-9a-zA-Z]*/?v=${GITHUB_SHA::7}/g" site/index.html
+        run: sed -i "s/?v=[0-9a-zA-Z]*/?v=${GITHUB_SHA::7}/g" site/index.html site/jarvis.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
