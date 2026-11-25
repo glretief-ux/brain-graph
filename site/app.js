@@ -552,7 +552,7 @@ const OL = (() => {
     return ((d && d.models) || []).map((m) => m.name).filter((n) => !/embed/i.test(n));
   }
   async function chat(messages, max_tokens) {
-    const r = await timed(base() + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: get('Model'), messages, stream: false, keep_alive: '30m', options: { temperature: 0.3, num_predict: Math.max(max_tokens || 500, 400) } }) }, 60000);
+    const r = await timed(base() + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: get('Model'), messages, stream: false, keep_alive: '30m', options: { temperature: 0.3, num_predict: Math.max(max_tokens || 500, 400) } }) }, max_tokens > 1000 ? 120000 : 60000);
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error('Ollama: ' + (d.error || 'error ' + r.status));
     return String((d.message && d.message.content) || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
@@ -580,22 +580,36 @@ const OL = (() => {
 })();
 const AI_READY = () => !!(CHAT_URL || GKEY() || OL.on());
 const BRAIN_SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's personal knowledge base (their "second brain").
-Answer using the notes provided below (they may include live calendar, Gmail and web results). If they do not contain the answer, say so briefly.
-Be concise: one to four short sentences, or a short list. Plain language, no preamble.
+For questions about the user's own projects, calendar or mail, answer from the notes provided below (they may include live calendar, Gmail and web results). For any other question, answer from your general knowledge.
+Keep quick facts short; give a fuller answer when the question needs one. Plain language, no preamble.
 Whenever you mention a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
-Never invent details that are not in the notes.`;
+Never invent details about the user.`;
+// Best free Groq models first (the old Llama ones left Groq's free plan in August 2026)
+const GROQ_PREF = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 let groqModel = '';
-async function groqPickModel() {
-  const r = await fetchT('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } }, 8000);
-  const d = await r.json().catch(() => ({}));
-  const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
-  return ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b'].find((m) => ids.includes(m)) || ids[0] || '';
+async function groqModels() {
+  try {
+    const r = await fetchT('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + GKEY() } }, 8000);
+    const d = await r.json().catch(() => ({}));
+    const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
+    return [...GROQ_PREF.filter((m) => ids.includes(m)), ...ids.filter((m) => !GROQ_PREF.includes(m))];
+  } catch (e) { return GROQ_PREF.slice(); }
 }
+// Explaining things: a different brief from the short "assistant" answers
+const EXPLAIN_SYSTEM = () => `You are J.A.R.V.I.S., a brilliant, patient teacher who can explain any subject. Today is ${new Date().toLocaleDateString('en-GB', { dateStyle: 'full' })}.
+Use all of your general knowledge. NOTES, when present, are extra material about the user's own projects and may be irrelevant: use them only when they help, and write a note title you mention in double square brackets, like [[Seizure Watch]].
+Shape of an explanation:
+1. First paragraph: the answer in two or three plain sentences. It is read aloud, so it must make sense on its own.
+2. Then "## How it works" (or a heading that fits) with the key ideas in logical order, in short paragraphs or bullet points.
+3. Then "## Example" with one concrete everyday example or analogy.
+4. Add "## Watch out" only if there is a common mistake or an important exception.
+Define any jargon the first time you use it. Aim for 200 to 350 words; go longer only when asked for more detail. If asked to make it simpler, use everyday words and shorter text. If asked for an example, give a new one.
+Be honest: if you are not sure, or the facts may have changed recently, say so. Never invent figures, names or quotes. Write in the language of the question. No greeting or preamble.`;
 const IS_GEM = () => !!GKEY() && !/^gsk_/.test(GKEY());
 let gemModel = '';
 const fetchT = (url, opts, ms) => { const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms); return fetch(url, { ...(opts || {}), signal: ac.signal }).catch((e) => { throw new Error(e && e.name === 'AbortError' ? 'the service did not answer in ' + Math.round(ms / 1000) + 's' : e.message); }).finally(() => clearTimeout(t)); };
-async function gemCall(model, payload) {
-  const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 15000);
+async function gemCall(model, payload, ms) {
+  const r = await fetchT('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(GKEY()), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, ms || 15000);
   const d = await r.json().catch(() => ({}));
   return { r, d };
 }
@@ -612,16 +626,16 @@ async function gemPick(fast) {
 }
 const GEM_GONE = /model|not found|not supported|no longer available|deprecated|quota|exceeded|rate.?limit|resource.?exhausted|overloaded|unavailable/i;
 let gemFast = '';
-async function gemGenerate(payload, fast) {                              // fast: small quick model (used for speech-to-text, where speed matters more than depth)
+async function gemGenerate(payload, fast, ms) {                              // fast: small quick model (used for speech-to-text, where speed matters more than depth)
   const first = fast ? (gemFast || 'gemini-flash-lite-latest') : (gemModel || 'gemini-flash-latest');
-  let { r, d } = await gemCall(first, payload);
+  let { r, d } = await gemCall(first, payload, ms);
   if (r.ok) { if (fast) gemFast = first; }
   else if (GEM_GONE.test((d.error && d.error.message) || '')) {
     const tried = [first];
     for (const alt of (await gemPick(fast)).slice(0, 4)) {
       if (tried.includes(alt)) continue;
       tried.push(alt);
-      ({ r, d } = await gemCall(alt, payload));
+      ({ r, d } = await gemCall(alt, payload, ms));
       if (r.ok) { if (fast) gemFast = alt; else gemModel = alt; break; }
       if (!GEM_GONE.test((d.error && d.error.message) || '')) break;
     }
@@ -631,7 +645,7 @@ async function gemGenerate(payload, fast) {                              // fast
   gemGenerate.sources = (((cand && cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((c) => c.web && (c.web.title || c.web.uri)).filter(Boolean));
   return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
 }
-async function groqChatDirect(messages, max_tokens) {
+async function groqChatDirect(messages, max_tokens, long) {
   if (OL.on() && OL.ready()) {                                            // local first
     try { const t = await OL.chat(messages, max_tokens); if (t) { groqChatDirect.via = 'ollama'; return t; } throw new Error('Ollama gave an empty answer'); }
     catch (e) { OL.fail(); const why = (e.name === 'AbortError' ? 'Ollama took too long' : e.message === 'Failed to fetch' ? 'Ollama is not reachable' : e.message); if (!GKEY()) throw new Error(why); }
@@ -640,20 +654,32 @@ async function groqChatDirect(messages, max_tokens) {
   if (IS_GEM()) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: Math.max(max_tokens, 2048), temperature: 0.3 } });
+    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: long ? 8192 : Math.max(max_tokens, 2048), temperature: 0.3 } }, false, long ? 45000 : 15000);
   }
-  const call = (model) => fetchT('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() },
-    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 })
-  }, 15000);
-  let r = await call(groqModel || 'llama-3.1-8b-instant');
-  let d = await r.json().catch(() => ({}));
-  if (!r.ok && /model/i.test((d.error && d.error.message) || '')) {
-    const alt = await groqPickModel();
-    if (alt) { groqModel = alt; r = await call(alt); d = await r.json().catch(() => ({})); }
+  const call = (model) => {
+    const oss = /gpt-oss/.test(model);                                    // these think before answering: give them room, keep the thinking out of the reply
+    const body = { model, messages, temperature: 0.3, max_completion_tokens: oss ? max_tokens + (long ? 1200 : 700) : max_tokens };
+    if (oss) { body.reasoning_effort = long ? 'medium' : 'low'; body.include_reasoning = false; }
+    return fetchT('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify(body) }, long ? 30000 : 15000);
+  };
+  const tried = [];
+  let queue = [groqModel || GROQ_PREF[0]], listed = false, limited = false, last = '';
+  while (queue.length && tried.length < 4) {
+    const model = queue.shift(); tried.push(model);
+    const r = await call(model);
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const t = String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      if (t) { if (!limited) groqModel = model; return t; }          // remember what works, but not a stand-in used only while rate limited
+      last = 'empty answer';
+    } else {
+      last = (d.error && d.error.message) || 'error ' + r.status;
+      if (r.status === 429) limited = true;
+      if (!(r.status === 429 || r.status === 413 || r.status >= 500 || /model|rate.?limit|too large/i.test(last))) break;
+    }
+    if (!listed) { listed = true; queue = (await groqModels()).filter((m) => !tried.includes(m)); }   // retired or busy: try the next one
   }
-  if (!r.ok) throw new Error('Groq: ' + ((d.error && d.error.message) || 'error ' + r.status));
-  return String((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
+  throw new Error('Groq: ' + (last || 'no model answered'));
 }
 // ---- Backup web search that needs no key: the Worker's search, then Wikipedia ----
 const NOSEARCH_KEY = 'brain.nativeSearchDown';
@@ -683,6 +709,18 @@ async function brainFetch(body) {
   if (GKEY() || (OL.on() && !body.search)) {
     try {
       brainFetch.lastErr = '';
+      if (body.question && body.explain) {
+        const msgs = [];
+        for (const m of (body.history || []).slice(-6)) {
+          const exp = msgs.length % 2 === 0 ? 'user' : 'assistant';
+          if (m && m.role === exp && m.content) msgs.push({ role: m.role, content: String(m.content).slice(0, 1800) });
+        }
+        if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
+        const ctx = (body.notes || []).slice(0, 6).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 900)).join('\n\n');
+        msgs.push({ role: 'user', content: String(body.question).slice(0, 1500) });
+        const answer = await groqChatDirect([{ role: 'system', content: EXPLAIN_SYSTEM() + (ctx ? '\n\nNOTES:\n\n' + ctx : '') }, ...msgs], 1600, true);
+        return fakeRes({ answer, explained: true, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
+      }
       if (body.question && body.live && GKEY() && !nativeSearchDown()) {                                 // needs current facts: let the AI search the web itself
         const when0 = new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' });
         const ctxLive = (body.notes || []).slice(0, IS_GEM() ? 9 : 5).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, IS_GEM() ? 1000 : 600)).join('\n\n');
@@ -747,8 +785,8 @@ async function brainFetch(body) {
           const lsys = 'You are J.A.R.V.I.S., a concise assistant for the user\'s notes. Answer ONLY from the NOTES in the message. If they do not contain the answer, say "I do not have a note on that." Reply in one to four short sentences. When you mention a note, write its exact title in double square brackets like [[Seizure Watch]]. Never apologise and never mention mistakes.';
           answer = await groqChatDirect([{ role: 'system', content: lsys }, ...lhist, { role: 'user', content: 'NOTES:\n\n' + lctx + '\n\nQUESTION: ' + q }], 500);
         } else {
-          const sysAny = body.live ? 'You are J.A.R.V.I.S., the user\'s everyday assistant. Today is ' + new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) + '. The material below holds WEB search results (type web) and the user\'s own notes. For general questions (prices, flights, travel, shopping, facts, how-to) answer from the web results and name the shop or site a figure comes from. For questions about the user\'s own projects answer from the notes and write note titles in double square brackets like [[Seizure Watch]]. If the material does not cover it, answer from your general knowledge and say it may be out of date. Never say the notes do not contain something and never suggest adding a note. Be concise: a few short sentences or a short list. No preamble.' : BRAIN_SYSTEM;
-          answer = await groqChatDirect([{ role: 'system', content: sysAny + '\n\nNOTES:\n\n' + ctx }, ...msgs], body.live ? 700 : 500);
+          const sysAny = body.live ? 'You are J.A.R.V.I.S., the user\'s everyday assistant. Today is ' + new Date().toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) + '. The material below holds WEB search results (type web) and the user\'s own notes. For general questions (prices, flights, travel, shopping, facts, how-to) answer from the web results and name the shop or site a figure comes from. For questions about the user\'s own projects answer from the notes and write note titles in double square brackets like [[Seizure Watch]]. If the material does not cover it, answer from your general knowledge and say it may be out of date. Never say the notes do not contain something and never suggest adding a note. Keep quick facts short; give a fuller, clearly structured answer when the question needs one. No preamble.' : BRAIN_SYSTEM;
+          answer = await groqChatDirect([{ role: 'system', content: sysAny + '\n\nNOTES:\n\n' + ctx }, ...msgs], body.live ? 1000 : 600);
         }
         return fakeRes({ answer, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
@@ -776,10 +814,11 @@ async function brainFetch(body) {
       if (!CHAT_URL) return fakeRes({ error: e.message || 'Groq error' }, false, 502);
       if (!body.question && !body.compose && !body.event && !body.search) throw e;
       brainFetch.lastErr = e.message;                                     // fall through to the Worker
+      if (body.explain) return fakeRes({ error: e.message }, false, 502);   // the Worker's short notes-only answer would not be an explanation
     }
   }
   if (!CHAT_URL) return fakeRes({ error: 'Add a free AI key in the panel (Free AI key), or set up the Worker.' }, false, 400);
-  const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 28000);
+  const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, body.explain ? 45000 : 28000);
   if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
   return r;
 }
@@ -939,23 +978,41 @@ function retrieve(question) {
 }
 
 function renderAnswer(text) {
-  text = String(text).replace(/\*\*|__/g, '').replace(/^\s*[*]\s+/gm, '- ');   // drop markdown bold markers
+  text = String(text);
   const box = $('#answer');
   box.replaceChildren();
+  box.scrollTop = 0;
   try { panel.classList.remove('closed'); box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}   // make sure the answer is on screen
   const cited = new Set();
   const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
-  text.split(/(\[\[[^\]]+\]\])/g).forEach((part) => {
-    const m = part.match(/^\[\[([^\]]+)\]\]$/);
-    if (!m) { box.append(document.createTextNode(part)); return; }
-    const node = byTitle.get(m[1].trim().toLowerCase());
-    if (!node) { box.append(document.createTextNode(m[1])); return; }
-    cited.add(node.i);
-    const b = el('button', null, node.title);
-    b.type = 'button';
-    b.onclick = () => select(node.i, true);
-    box.append(b);
+  const inline = (host, str) => {                                         // [[note]], **bold**, `code`; text only, never HTML
+    str.split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)/g).forEach((part) => {
+      if (!part) return;
+      const m = part.match(/^\[\[([^\]]+)\]\]$/);
+      if (m) {
+        const node = byTitle.get(m[1].trim().toLowerCase());
+        if (!node) { host.append(document.createTextNode(m[1])); return; }
+        cited.add(node.i);
+        const b = el('button', null, node.title);
+        b.type = 'button';
+        b.onclick = () => select(node.i, true);
+        host.append(b);
+      } else if (/^(\*\*|__)/.test(part) && part.length > 4) { const st = el('strong'); inline(st, part.slice(2, -2)); host.append(st); }
+      else if (part.length > 2 && part[0] === '`' && part.endsWith('`')) host.append(el('code', null, part.slice(1, -1)));
+      else host.append(document.createTextNode(part.replace(/\*\*/g, '')));
+    });
+  };
+  text.replace(/\r/g, '').split('\n').forEach((raw) => {
+    const line = raw.trim();
+    if (!line || /^(```.*|-{3,}|\|?[\s:|-]+\|)$/.test(line)) return;
+    const h = line.match(/^#{1,6}\s+(.*)$/), li = line.match(/^(?:[-*\u2022]|(\d+[.)]))\s+(.*)$/);
+    let row;
+    if (h) { row = el('div', 'md-h'); inline(row, h[1]); }
+    else if (li) { row = el('div', 'md-li'); row.dataset.mark = li[1] || '\u2022'; inline(row, li[2]); }
+    else { row = el('div', 'md-p'); inline(row, line.replace(/^\||\|$/g, '').replace(/\s*\|\s*/g, ' \u00b7 ')); }
+    box.append(row);
   });
+  box.classList.toggle('long', text.length > 260);
   S.cited = cited;
   S.dirty = true;
 }
@@ -2196,10 +2253,70 @@ async function tour() {
   } finally { chat.busy = false; orb.set('idle'); }
 }
 
+// "explain ...", "why ...", "how does ... work": a proper explanation, not a one-line answer
+const LEAD = /^\s*(?:(?:(?:hey|ok|okay)\s+)?jarvis[,.!\s]+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?/i;
+function isExplain(q) {
+  const t = String(q).replace(LEAD, '').trim();
+  if (/^(?:explain|teach me|help me (?:to )?understand|break\s?down|clarify|define|walk me through (?:how|why|what)|give me an explanation)\b/i.test(t)) return true;
+  if (/\b(?:my|weather|forecast|news|headlines|timers?|calendar|e-?mails?)\b/i.test(t) || /\bi (?:have|need to do)\b/i.test(t)) return false;   // personal and service questions keep their own path
+  return /^(?:why\b|how come\b|how (?:do|does|did|can|could|would)\b(?!\s+(?:i|you)\b)|how (?:is|are) .+ (?:made|formed|produced|calculated|measured|used)\b|what (?:causes|makes)\b|what(?:'s| is)? the difference\b|difference between\b|what does .+ mean\b|what (?:is|are) (?:a|an)\b|(?:tell me (?:more )?about|describe)\b)/i.test(t);
+}
+const FOLLOW_RE = /^(?:(?:explain|say|tell me) (?:that|it|this)\b.*|(?:make it |a bit |much )?(?:simpler|shorter|easier)\b.*|in (?:simple|plain) (?:terms|words|english)|(?:give me |tell me |some )?more(?: detail(?:s)?| info)?|go (?:deeper|on)|continue|tell me more|(?:give (?:me )?)?(?:an|another) example\b.*|(?:explain )?like i(?:'m| am) .+|why(?: is that)?|how so)[\s.?!]*$/i;
+const isFollowUp = (q) => chat.history.length > 0 && FOLLOW_RE.test(String(q).replace(LEAD, '').trim());
+function followButtons(box, answer) {
+  const bar = el('div', 'md-follow');
+  const add = (label, fn) => { const b = el('button', null, label); b.type = 'button'; b.onclick = () => { voiceBox.unlock(); fn(); }; bar.append(b); };
+  add('Simpler', () => ask('Explain that in simpler words'));
+  add('More detail', () => ask('Go deeper'));
+  add('Example', () => ask('Give me another example'));
+  add('Read it all', () => {
+    $('#speak').checked = true; voiceBox.stop(); wake.pause(true); speakLocal(plain(answer));
+    const t0 = Date.now(), iv = setInterval(() => { const talking = 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending); if ((!talking && Date.now() - t0 > 3000) || Date.now() - t0 > 240000) { clearInterval(iv); wake.pause(false); } }, 500);
+  });
+  add('Stop', () => { voiceBox.stop(); if ('speechSynthesis' in window) speechSynthesis.cancel(); orb.set('idle'); });
+  box.append(bar);
+}
+const plain = (t) => String(t).replace(/^#{1,6}\s+(.*)$/gm, '$1.').replace(/\*\*|__|`|\[\[|\]\]/g, '').replace(/^\s*[\u2022*-]\s+/gm, '').replace(/\s+/g, ' ').trim();
+async function explain(question) {
+  const box = $('#answer');
+  chat.busy = true; orb.set('thinking'); $('#askGo').disabled = true;
+  box.classList.remove('long');
+  box.replaceChildren(el('span', 'muted', 'Working out a clear explanation\u2026'));
+  S.cited = new Set();
+  try {
+    const follow = isFollowUp(question);
+    const topic = follow ? [...chat.history].reverse().find((m) => m.role === 'user' && !FOLLOW_RE.test(m.content)) : null;
+    const about = topic ? topic.content : question;
+    const own = withSnippets(scoreNotes(about).filter((x) => x.s >= 10).slice(0, 4).map((x) => x.n), about);   // only notes that clearly match
+    let web = [];
+    if (!follow && /\b(?:latest|news|current(?:ly)?|right now|today|this (?:week|month|year)|recent(?:ly)?|prices?|2026|2027)\b/i.test(question)) { try { web = webNotes(await webLookup(question)).slice(0, 3); } catch (e) {} }
+    const mine = await gg.notesFor(question);
+    const tA = Date.now();
+    const r = await Promise.race([brainFetch({ explain: true, question, notes: [...web, ...mine, ...own].slice(0, 6), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 130000))]);
+    const data = await r.json().catch(() => ({}));
+    vlog('explain: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
+    if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
+    chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
+    chat.history = chat.history.slice(-8);
+    renderAnswer(data.answer);
+    if (!data.explained) box.append(el('div', 'muted', 'For full explanations, save a free Groq or Gemini key under Systems & keys.'));
+    else followButtons(box, data.answer);
+    if (OL.on()) box.append(el('div', 'muted', data.via === 'ollama' ? 'Answered on this PC by ' + data.model + '.' : 'Answered by the cloud AI.'));
+    orb.set('idle');
+    const first = data.answer.split(/\n\s*\n|\n(?=#)/).map((p) => p.trim()).find((p) => p && !p.startsWith('#')) || data.answer;
+    say(first);                                                          // speak the summary; "Read it all" reads the rest
+  } catch (e) {
+    vlog('explain failed: ' + e.message);
+    box.replaceChildren(el('span', 'err', 'Could not get an explanation: ' + e.message));
+    orb.set('idle');
+  } finally { chat.busy = false; $('#askGo').disabled = false; }
+}
+
 async function ask(question) {
   if (chat.busy || !question) return;
   { const sw = await OL.command(question); if (sw) { renderAnswer(sw); orb.set('idle'); say(sw); return; } }   // "switch to <model>"
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
+  if (AI_READY() && (isExplain(question) || isFollowUp(question))) { await explain(question); return; }
   if (svc.match(question)) { await svc.handle(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
   if (gg.isLookup(question)) { await gg.lookupAddress(question); return; }
@@ -2217,6 +2334,7 @@ async function ask(question) {
   chat.busy = true;
   orb.set('thinking');
   $('#askGo').disabled = true;
+  box.classList.remove('long');
   box.replaceChildren(el('span', 'muted', 'Thinking…'));
   S.cited = new Set();
   try {
@@ -2234,7 +2352,7 @@ async function ask(question) {
     vlog('answer: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
-    chat.history = chat.history.slice(-6);
+    chat.history = chat.history.slice(-8);
     renderAnswer(data.answer);
     if (OL.on()) box.append(el('div', 'muted', data.via === 'ollama' ? 'Answered on this PC by ' + data.model + '.' : 'Answered by the cloud AI (Ollama was not available).'));
     orb.set('idle');

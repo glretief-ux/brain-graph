@@ -167,3 +167,12 @@ label.voice select { max-width: 100%; }
 .vsbox label.inline { display: flex; align-items: center; gap: 8px; margin: 2px 0; font-size: 12px; }
 .vsbox label.inline input[type="checkbox"] { width: auto; min-height: 0; padding: 0; }
 .vsbox .voice { margin: 2px 0 0; }
+
+/* answers: headings, lists and follow-up buttons */
+#answer .md-p, #answer .md-li { margin: 0 0 6px; white-space: normal; }
+#answer .md-h { margin: 10px 0 4px; font-weight: 700; color: var(--accent); }
+#answer .md-li { position: relative; padding-left: 1.5em; }
+#answer .md-li::before { content: attr(data-mark); position: absolute; left: 0; color: var(--accent); }
+#answer code { font-family: ui-monospace, Menlo, monospace; font-size: .92em; }
+#answer .md-follow { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+#answer .md-follow button { min-height: 36px; padding: 6px 14px; cursor: pointer; }

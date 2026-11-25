@@ -25,6 +25,10 @@ Be concise: one to four short sentences, or a short list. Plain language, no pre
 Whenever you mention a note, write its exact title in double square brackets, like [[Seizure Watch]].
 Never invent details that are not in the notes.`;
 
+const EXPLAIN = `You are J.A.R.V.I.S., a patient teacher who can explain any subject from general knowledge.
+Start with the answer in two or three plain sentences. Then explain the key ideas in logical order with short headings (## ...) or bullet points, and give one concrete example. Define jargon. About 200 to 350 words.
+The NOTES are optional extra material about the user's projects. Be honest when unsure and never invent figures. No preamble.`;
+
 // ---- Groq (free tier, separate daily allowance from Cloudflare) ----
 let groqPicked = null;
 // Ask Groq which chat models this key can use, and pick a good one (models get renamed over time)
@@ -32,7 +36,7 @@ async function groqPick(env) {
   const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: "Bearer " + env.GROQ_API_KEY } });
   const d = await r.json().catch(() => ({}));
   const ids = ((d && d.data) || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|playai|embed|safeguard/i.test(id));
-  const prefer = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b", "openai/gpt-oss-120b"];
+  const prefer = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
   return prefer.find((m) => ids.includes(m)) || ids[0] || null;
 }
 const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label + " took too long")), ms))]);
@@ -43,7 +47,7 @@ async function groqChat(env, messages, max_tokens) {
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.3 }),
     signal: AbortSignal.timeout(12000),
   });
-  let model = env.GROQ_MODEL || groqPicked || "llama-3.1-8b-instant";
+  let model = env.GROQ_MODEL || groqPicked || "openai/gpt-oss-120b";
   let r = await call(model);
   let d = await r.json().catch(() => ({}));
   if (!r.ok && /model/i.test((d.error && d.error.message) || "")) {          // wrong or retired model: find one that works
@@ -247,13 +251,14 @@ ${contacts || "(none)"}`;
     if (messages.length && messages[messages.length - 1].role === "user") messages.pop();
     messages.push({ role: "user", content: question });
 
-    const system = `${SYSTEM}\n\nNOTES:\n\n${context}`;
+    const explain = body.explain === true;
+    const system = `${explain ? EXPLAIN : SYSTEM}\n\nNOTES:\n\n${context}`;
 
     if (!useClaude) {
       try {
-        const answer = await freeChat(env, [{ role: "system", content: system }, ...messages], 500);
+        const answer = await freeChat(env, [{ role: "system", content: system }, ...messages], explain ? 1600 : 500);
         if (!answer) return json({ error: "The free model returned nothing" }, 502, cors);
-        return json({ answer }, 200, cors);
+        return json({ answer, explained: explain }, 200, cors);
       } catch (e) {
         return json({ error: "Free AI error: " + (e && e.message ? e.message : "unknown") }, 502, cors);
       }
@@ -268,7 +273,7 @@ ${contacts || "(none)"}`;
       },
       body: JSON.stringify({
         model: env.MODEL || "claude-sonnet-5-5",
-        max_tokens: 700,
+        max_tokens: explain ? 1600 : 700,
         system,
         messages,
       }),
@@ -277,6 +282,6 @@ ${contacts || "(none)"}`;
     if (!r.ok) return json({ error: (data.error && data.error.message) || "Claude API error" }, 502, cors);
 
     const answer = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    return json({ answer }, 200, cors);
+    return json({ answer, explained: explain }, 200, cors);
   },
 };

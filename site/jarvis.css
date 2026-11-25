@@ -101,6 +101,7 @@ body.jarvis #feeds h2 { margin-top: 4px; }
 #dock #orb { position: relative; top: auto; right: auto; transform: none; width: 150px; flex: none; pointer-events: auto; color: var(--accent); }
 #dock #ask { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 #dock #answer { max-height: 96px; margin: 0; font-size: 15px; color: #d6fbff; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hud-dim) transparent; }
+#dock #answer.long { max-height: 52vh; max-height: 52dvh; line-height: 1.5; -webkit-overflow-scrolling: touch; user-select: text; -webkit-user-select: text; padding-right: 6px; }
 #dock #askForm { gap: 8px; }
 .dockrow { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .dockrow label { margin: 0; }
