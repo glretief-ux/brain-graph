@@ -1032,23 +1032,21 @@ function renderAnswer(text) {
 }
 
 /* ---------- iPad audio mode ----------
-   Safari refuses the microphone while the page's audio session is "playback" (InvalidStateError), even when permission is Allow.
-   So: "play-and-record" whenever the mic is wanted, "playback" (speaks even on silent) only while no mic is open. */
+   Safari refuses the microphone (InvalidStateError "AudioSession category is not compatible") unless the page's audio
+   session is "auto" or "play-and-record". Jarvis therefore never selects "playback": it resets to "auto" right before
+   every capture and, if Safari still refuses, tries once more as "play-and-record". Open the mic only via audioMode.mic. */
 const audioMode = (() => {
   const set = (t) => { try { if (navigator.audioSession) navigator.audioSession.type = t; } catch (e) {} };
-  let pending = 0, tracks = [];
-  const micBusy = () => { tracks = tracks.filter((t) => t.readyState === 'live'); return pending > 0 || tracks.length > 0; };
-  const md = navigator.mediaDevices;
-  if (md && md.getUserMedia) {
-    const open = md.getUserMedia.bind(md);
-    md.getUserMedia = async (c) => {
-      if (!c || !c.audio) return open(c);
-      pending++; set('play-and-record');
-      try { const st = await open(c); tracks.push(...st.getAudioTracks()); return st; }
-      finally { pending--; }
-    };
-  }
-  return { playback: () => { if (!micBusy()) set('playback'); }, listen: () => set('auto') };   // listen: before the browser's own speech recognition
+  const mic = async (c) => {
+    set('auto');
+    try { return await navigator.mediaDevices.getUserMedia(c); }
+    catch (e) {
+      if (!e || e.name !== 'InvalidStateError') throw e;
+      set('play-and-record');
+      return navigator.mediaDevices.getUserMedia(c);
+    }
+  };
+  return { mic, listen: () => set('auto') };                              // listen: before the browser's own speech recognition
 })();
 
 /* ---------- Jarvis voice ---------- */
@@ -1072,9 +1070,7 @@ const voiceBox = (() => {
   let busyAI = false, unlocked = false, aiDown = false, proDown = false, token = 0;
   // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
   const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-  const playback = () => audioMode.playback();   // iOS 17+: speak even when the ringer switch is on silent, and treat the page as media, not a call
   const unlock = () => {
-    playback();
     const c = getCtx(); if (c) { try { c.resume(); const b = c.createBuffer(1, 1, 22050), n = c.createBufferSource(); n.buffer = b; n.connect(c.destination); n.start(0); } catch (e) {} }
     if (unlocked) return; unlocked = true; try { player.src = SILENT; player.play().catch(() => {}); } catch (e) {}
   };
@@ -1340,7 +1336,6 @@ async function speakLocal(clean) {
   if (!('speechSynthesis' in window)) { vlog('voice: this browser has no device voice'); return; }
   try { await wake.release(); } catch (e) {}                              // the microphone must be fully closed first: a live mic silences iPad speech
   await new Promise((r) => setTimeout(r, 400));
-  audioMode.playback();
   speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch (e) {}
   const go = (withVoice, attempt) => {
     const u = new SpeechSynthesisUtterance(clean);
@@ -2465,12 +2460,12 @@ function initChat() {
 const micProblem = (e) => e && e.name === 'NotFoundError' ? 'No microphone found on this device'
   : e && e.name === 'NotAllowedError' ? 'Microphone blocked: allow Microphone for this site (Safari: menu in the address bar, Website Settings)'
   : e && e.name === 'TimeoutError' ? 'The microphone did not respond. Close this tab, close other apps that use the mic, then open Jarvis again.'
-  : 'The microphone could not start (' + ((e && (e.name + ': ' + e.message)) || 'unknown error') + ')';
+  : 'The microphone could not start (' + ((e && (e.name + ': ' + e.message)) || 'unknown error') + (navigator.audioSession ? ' [audio mode: ' + navigator.audioSession.type + ']' : '') + ')';
 const convo = (() => {
   let on = false, stream = null, ctx = null, lastPeak = 0, tried = new Set();
   const micSel = () => document.getElementById('mic');
   const savedMic = () => { try { return localStorage.getItem('brain.mic') || ''; } catch (e) { return ''; } };
-  const openStream = (id) => navigator.mediaDevices.getUserMedia({ audio: Object.assign({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }, id ? { deviceId: { exact: id } } : {}) });
+  const openStream = (id) => audioMode.mic({ audio: Object.assign({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }, id ? { deviceId: { exact: id } } : {}) });
   async function listMics() {
     let all = [];
     try { all = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications'); } catch (e) {}
@@ -2715,7 +2710,7 @@ const wake = (() => {
     const st = wst = { stop: false, stream: null, ctx: null };
     vlog('wake: starting the microphone');
     try { st.ctx = new (window.AudioContext || window.webkitAudioContext)(); st.ctx.resume(); } catch (e) {}   // created during the tick/tap so Safari lets it run
-    const gum = (o) => Promise.race([navigator.mediaDevices.getUserMedia(o), new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 10000))]);
+    const gum = (o) => Promise.race([audioMode.mic(o), new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT')), 10000))]);
     try {
       const id = load('brain.mic') || '';
       const opts = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
