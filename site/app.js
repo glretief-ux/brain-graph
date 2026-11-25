@@ -1017,6 +1017,26 @@ function renderAnswer(text) {
   S.dirty = true;
 }
 
+/* ---------- iPad audio mode ----------
+   Safari refuses the microphone while the page's audio session is "playback" (InvalidStateError), even when permission is Allow.
+   So: "play-and-record" whenever the mic is wanted, "playback" (speaks even on silent) only while no mic is open. */
+const audioMode = (() => {
+  const set = (t) => { try { if (navigator.audioSession) navigator.audioSession.type = t; } catch (e) {} };
+  let pending = 0, tracks = [];
+  const micBusy = () => { tracks = tracks.filter((t) => t.readyState === 'live'); return pending > 0 || tracks.length > 0; };
+  const md = navigator.mediaDevices;
+  if (md && md.getUserMedia) {
+    const open = md.getUserMedia.bind(md);
+    md.getUserMedia = async (c) => {
+      if (!c || !c.audio) return open(c);
+      pending++; set('play-and-record');
+      try { const st = await open(c); tracks.push(...st.getAudioTracks()); return st; }
+      finally { pending--; }
+    };
+  }
+  return { playback: () => { if (!micBusy()) set('playback'); }, listen: () => set('auto') };   // listen: before the browser's own speech recognition
+})();
+
 /* ---------- Jarvis voice ---------- */
 const voiceBox = (() => {
   const KEY = 'jarvisVoice';
@@ -1038,7 +1058,7 @@ const voiceBox = (() => {
   let busyAI = false, unlocked = false, aiDown = false, proDown = false, token = 0;
   // iOS only lets a page play audio after a tap: play a tiny silent clip inside the first tap
   const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-  const playback = () => { try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {} };   // iOS 17+: speak even when the ringer switch is on silent, and treat the page as media, not a call
+  const playback = () => audioMode.playback();   // iOS 17+: speak even when the ringer switch is on silent, and treat the page as media, not a call
   const unlock = () => {
     playback();
     const c = getCtx(); if (c) { try { c.resume(); const b = c.createBuffer(1, 1, 22050), n = c.createBufferSource(); n.buffer = b; n.connect(c.destination); n.start(0); } catch (e) {} }
@@ -1306,7 +1326,7 @@ async function speakLocal(clean) {
   if (!('speechSynthesis' in window)) { vlog('voice: this browser has no device voice'); return; }
   try { await wake.release(); } catch (e) {}                              // the microphone must be fully closed first: a live mic silences iPad speech
   await new Promise((r) => setTimeout(r, 400));
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  audioMode.playback();
   speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch (e) {}
   const go = (withVoice, attempt) => {
     const u = new SpeechSynthesisUtterance(clean);
@@ -2416,7 +2436,7 @@ function initChat() {
       typeInstead();
     };
     rec.onend = () => { mic.classList.remove('on'); if (orb.get() === 'listening') orb.set('idle'); };
-    try { rec.start(); } catch (e) { mic.classList.remove('on'); orb.set('idle'); }
+    try { audioMode.listen(); rec.start(); } catch (e) { mic.classList.remove('on'); orb.set('idle'); }
   };
   mic.addEventListener('click', startListening);
   // Tapping the orb = talk to Jarvis, and Jarvis talks back
@@ -2428,6 +2448,9 @@ function initChat() {
 }
 
 /* ---------- hands-free conversation (needs the Worker for speech-to-text) ---------- */
+const micProblem = (e) => e && e.name === 'NotFoundError' ? 'No microphone found on this device'
+  : e && e.name === 'NotAllowedError' ? 'Microphone blocked: allow Microphone for this site (Safari: menu in the address bar, Website Settings)'
+  : 'The microphone could not start (' + ((e && (e.name + ': ' + e.message)) || 'unknown error') + ')';
 const convo = (() => {
   let on = false, stream = null, ctx = null, lastPeak = 0, tried = new Set();
   const micSel = () => document.getElementById('mic');
@@ -2541,7 +2564,7 @@ const convo = (() => {
       listMics();
     } catch (e) {
       try { ctx0.close(); } catch (e2) {}
-      say2(e && e.name === 'NotFoundError' ? 'No microphone found on this device' : 'Microphone blocked: click the lock icon in the address bar and allow Microphone (Safari: Website Settings)');
+      vlog('mic: ' + (e && e.name) + ' ' + (e && e.message)); say2(micProblem(e));
       return false;
     }
     ctx = ctx0;
@@ -2653,7 +2676,7 @@ const wake = (() => {
     const t0 = Date.now();
     r.onend = () => { running = false; if (rec === r) rec = null; if (!srBroken && Date.now() - t0 < 900 && ++quick > 4 && wCapable()) { srBroken = true; store('brain.srBroken', '1'); } };
     rec = r;
-    try { r.start(); } catch (e) { rec = null; }
+    try { audioMode.listen(); r.start(); } catch (e) { rec = null; }
   }
 
   // Listens through the microphone, cuts out each spoken phrase and has the AI key write it down; no browser speech recognition needed
