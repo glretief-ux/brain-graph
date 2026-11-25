@@ -645,6 +645,19 @@ async function gemGenerate(payload, fast, ms) {                              // 
   gemGenerate.sources = (((cand && cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((c) => c.web && (c.web.title || c.web.uri)).filter(Boolean));
   return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
 }
+// Explanations: try the stronger model first, but never leave the user waiting: switch to the quick one if it is slow, busy or silent
+let gemSlowUntil = 0;
+async function gemExplain(payload) {
+  if (Date.now() > gemSlowUntil) {
+    try { const t = await gemGenerate(payload, false, 20000); if (t) return t; }
+    catch (e) { if (!/did not answer|overloaded|unavailable|high demand|quota|exceeded|rate.?limit|resource.?exhausted|internal/i.test(e.message)) throw e; vlog('explain: main model failed, ' + String(e.message).slice(0, 80)); }
+    gemSlowUntil = Date.now() + 5 * 60 * 1000;                            // go straight to the quick model for a few minutes
+    vlog('explain: switching to the quick model');
+  }
+  const t = await gemGenerate(payload, true, 40000);
+  if (!t) throw new Error('Gemini returned an empty answer. Please ask again.');
+  return t;
+}
 async function groqChatDirect(messages, max_tokens, long) {
   if (OL.on() && OL.ready()) {                                            // local first
     try { const t = await OL.chat(messages, max_tokens); if (t) { groqChatDirect.via = 'ollama'; return t; } throw new Error('Ollama gave an empty answer'); }
@@ -654,7 +667,8 @@ async function groqChatDirect(messages, max_tokens, long) {
   if (IS_GEM()) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    return gemGenerate({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: long ? 8192 : Math.max(max_tokens, 2048), temperature: 0.3 } }, false, long ? 45000 : 15000);
+    const payload = { systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: long ? 4096 : Math.max(max_tokens, 2048), temperature: 0.3 } };
+    return long ? gemExplain(payload) : gemGenerate(payload);
   }
   const call = (model) => {
     const oss = /gpt-oss/.test(model);                                    // these think before answering: give them room, keep the thinking out of the reply
@@ -2450,6 +2464,7 @@ function initChat() {
 /* ---------- hands-free conversation (needs the Worker for speech-to-text) ---------- */
 const micProblem = (e) => e && e.name === 'NotFoundError' ? 'No microphone found on this device'
   : e && e.name === 'NotAllowedError' ? 'Microphone blocked: allow Microphone for this site (Safari: menu in the address bar, Website Settings)'
+  : e && e.name === 'TimeoutError' ? 'The microphone did not respond. Close this tab, close other apps that use the mic, then open Jarvis again.'
   : 'The microphone could not start (' + ((e && (e.name + ': ' + e.message)) || 'unknown error') + ')';
 const convo = (() => {
   let on = false, stream = null, ctx = null, lastPeak = 0, tried = new Set();
@@ -2551,26 +2566,41 @@ const convo = (() => {
     stop();
   }
 
+  let starting = 0, attempt = 0;
+  // never wait for ever: if the iPad does not answer, say so
+  const openTimed = (id) => new Promise((res, rej) => {
+    let late = false;
+    const t = setTimeout(() => { late = true; const e = new Error('no answer'); e.name = 'TimeoutError'; rej(e); }, 12000);
+    openStream(id).then((st) => { clearTimeout(t); if (late) st.getTracks().forEach((x) => x.stop()); else res(st); }, (e) => { clearTimeout(t); rej(e); });
+  });
   async function start() {
     if (on) return;
+    if (starting) { starting = 0; say2('Cancelled. Tap again to talk.'); return false; }
+    const mine = starting = ++attempt;
+    say2('Opening the microphone\u2026'); vlog('orb: tapped, opening the microphone');
     const AC = window.AudioContext || window.webkitAudioContext;
     const ctx0 = new AC();
     try { ctx0.resume(); } catch (e) {}
     try { if (typeof wake !== 'undefined') await wake.release(); } catch (e) {}
     try {
       tried = new Set();
-      try { stream = await openStream(savedMic()); } catch (e) { if (e && e.name === 'NotFoundError' || e && e.name === 'OverconstrainedError') stream = await openStream(''); else throw e; }
+      let got;
+      try { got = await openTimed(savedMic()); } catch (e) { if (e && e.name === 'NotFoundError' || e && e.name === 'OverconstrainedError') got = await openTimed(''); else throw e; }
+      if (starting !== mine) { got.getTracks().forEach((t) => t.stop()); try { ctx0.close(); } catch (e) {} return false; }   // cancelled meanwhile
+      stream = got;
       const id0 = stream.getAudioTracks()[0].getSettings().deviceId; if (id0) tried.add(id0);
       listMics();
     } catch (e) {
       try { ctx0.close(); } catch (e2) {}
+      if (starting !== mine) return false;
+      starting = 0;
       vlog('mic: ' + (e && e.name) + ' ' + (e && e.message)); say2(micProblem(e));
       return false;
     }
-    ctx = ctx0;
-    try { await ctx.resume(); } catch (e) {}
+    ctx = ctx0; starting = 0; on = true;
+    try { ctx.resume().catch(() => {}); } catch (e) {}                        // do not wait: Safari can leave this pending
     vlog('orb: mic open (' + ((stream.getAudioTracks()[0] || {}).label || '?') + '), audio ' + ctx.state);
-    on = true; $('#speak').checked = true; say2('Listening… speak now.');
+    $('#speak').checked = true; say2('Listening… speak now.');
     orb.el.classList.add('live');
     loop();
     return true;
@@ -2591,7 +2621,7 @@ const convo = (() => {
       else { try { localStorage.setItem('brain.mic', e.target.value); } catch (err) {} }
     }
   });
-  return { supported, toggle: () => (on ? stop() : start()), isOn: () => on };
+  return { supported, toggle: () => (on ? stop() : start()), isOn: () => on || !!starting };
 })();
 
 /* ---------- wake phrase: say "Hey Jarvis" while this page is open (Chrome/Edge on PC work best) ---------- */

@@ -136,7 +136,13 @@
 
   /* ---- drag to tilt, springs back ---- */
   let dragging = false, lx = 0, ly = 0, tiltX = 0, tiltY = 0, vx = 0, vy = 0;
-  canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+  let down = null;                                          // a tap (not a drag) anywhere on the reactor = talk to Jarvis
+  canvas.addEventListener('pointerdown', (e) => { dragging = true; down = { x: e.clientX, y: e.clientY, t: Date.now() }; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointerup', (e) => {
+    const r = canvas.getBoundingClientRect(), o = document.querySelector('#orb');
+    if (o && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12 && Date.now() - down.t < 700 && Math.hypot(e.clientX - r.x - r.width / 2, e.clientY - r.y - r.height / 2) < r.width * 0.46) o.click();
+    down = null;
+  });
   canvas.addEventListener('pointermove', (e) => { if (!dragging) return; vy += (e.clientX - lx) * 0.004; vx += (e.clientY - ly) * 0.004; lx = e.clientX; ly = e.clientY; });
   const up = () => { dragging = false; };
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
