@@ -233,18 +233,13 @@
     input.value = b.dataset.q; form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit', { cancelable: true }));
   }));
 
-  /* ---------- markets + headlines (written by the Pages workflow; the card hides itself if absent) ---------- */
+  /* ---------- headlines (written by the Pages workflow; the card hides itself if absent) ---------- */
   async function loadFeeds() {
     const card = $('#feeds'); if (!card) return;
     const get = (u) => fetch(u + '?t=' + Math.floor(Date.now() / 600000), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [news, mk] = await Promise.all([get('news.json'), get('markets.json')]);
-    const fM = $('#fMarkets'), fN = $('#fNews'); let any = false;
-    fM.replaceChildren(); fN.replaceChildren();
-    if (mk && mk.quotes) for (const q of Object.values(mk.quotes).slice(0, 6)) {
-      const row = el('div', 'fq'), ch = typeof q.change_pct === 'number' ? q.change_pct : null;
-      const b = el('span', ch == null ? '' : ch >= 0 ? 'up' : 'dn', String(q.price) + (ch == null ? '' : '  ' + (ch >= 0 ? '▲' : '▼') + Math.abs(ch).toFixed(1) + '%'));
-      row.append(el('span', null, String(q.label || q.name || '').toUpperCase().slice(0, 12)), b); fM.append(row); any = true;
-    }
+    const news = await get('news.json');
+    const fN = $('#fNews'); let any = false;
+    fN.replaceChildren();
     if (news && news.topics) {
       const rows = []; for (const list of Object.values(news.topics)) for (const it of (list || []).slice(0, 2)) rows.push(it);
       for (const it of rows.slice(0, 6)) {
