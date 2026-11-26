@@ -10,9 +10,9 @@
 <title>J.A.R.V.I.S.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
-<link rel="stylesheet" href="style.css?v=58">
-<link rel="stylesheet" href="hud.css?v=58">
-<link rel="stylesheet" href="jarvis.css?v=58">
+<link rel="stylesheet" href="style.css?v=60">
+<link rel="stylesheet" href="hud.css?v=60">
+<link rel="stylesheet" href="jarvis.css?v=60">
 </head>
 <body class="jarvis">
 <canvas id="hudbg"></canvas>
@@ -73,6 +73,17 @@
         <button type="button" id="eCancel" class="gbtn">Discard</button>
       </div>
     </div>
+  <section id="ytp" hidden>
+    <h2>Whisky channel</h2>
+    <div id="ytName"></div>
+    <div id="ytStats"></div>
+    <div id="ytVids"></div>
+    <div id="ytMsg" class="hint"></div>
+    <div class="ytbtns">
+      <button type="button" id="ytBtn" class="gbtn">Connect Google</button>
+      <a id="ytOpen" class="gbtn" href="https://www.youtube.com/@whiskyloverssociety" target="_blank" rel="noopener noreferrer">Open channel</a>
+    </div>
+  </section>
   <section>
     <h2>Inspector</h2>
     <div id="inspector"></div>
@@ -206,10 +217,10 @@
 </aside>
 
 <div id="toast"></div>
-<script src="config.js?v=58"></script>
-<script src="vendor/three.min.js?v=58"></script>
-<script src="jarvis.js?v=58"></script>
-<script src="jarvis3d.js?v=58"></script>
-<script src="app.js?v=58"></script>
+<script src="config.js?v=60"></script>
+<script src="vendor/three.min.js?v=60"></script>
+<script src="jarvis.js?v=60"></script>
+<script src="jarvis3d.js?v=60"></script>
+<script src="app.js?v=60"></script>
 </body>
 </html>

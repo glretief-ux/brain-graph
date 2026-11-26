@@ -348,3 +348,60 @@
     }
   };
 })();
+
+/* ---- Whisky channel panel: numbers come from the Google sign-in in app.js (read only), shown here ---- */
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const card = $('#ytp'); if (!card) return;
+  const KEY = 'brain.ytcache';                                  // last numbers seen, kept in this browser only (Sign out clears it)
+  const n = (v) => Number(v || 0).toLocaleString('en-GB');
+  const make = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } };
+  const change = (a, b) => (b ? (a >= b ? '\u25b2' : '\u25bc') + Math.abs(Math.round((a - b) / b * 100)) + '%' : '');
+  const date = (d) => (d ? new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+  function snapshot(y) {
+    return {
+      at: Date.now(), name: y.name, subs: y.subs, total: y.views,
+      an: y.an ? { views: y.an.views, prev: y.prev ? y.prev.views : 0, hours: Math.round(y.an.estimatedMinutesWatched / 60), gained: y.an.subscribersGained - y.an.subscribersLost } : null,
+      vids: y.vids.filter((v) => v.pub !== false).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 2).map((v) => ({ id: v.id, title: v.title, date: v.date, views: v.views, likes: v.likes }))
+    };
+  }
+  function paint(c) {
+    $('#ytName').textContent = c ? c.name : '';
+    const stats = $('#ytStats'), vids = $('#ytVids'); stats.replaceChildren(); vids.replaceChildren();
+    if (!c) return;
+    const box = (label, value, extra) => { const d = make('div'); d.append(make('small', null, label), make('b', null, value)); if (extra) d.append(make('i', extra[0] === '\u25bc' ? 'dn' : 'up', extra)); stats.append(d); };
+    box('Subscribers', c.subs == null ? 'hidden' : n(c.subs));
+    if (c.an) {
+      box('Views, 28 days', n(c.an.views), change(c.an.views, c.an.prev));
+      box('Watch hours', n(c.an.hours));
+      box('New subscribers', (c.an.gained > 0 ? '+' : '') + n(c.an.gained));
+    } else box('Total views', n(c.total));
+    if (c.vids.length) vids.append(make('h3', null, 'Latest videos'));
+    for (const v of c.vids) {
+      const a = make('a', 'ytv'); a.href = 'https://youtu.be/' + encodeURIComponent(v.id); a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.append(make('span', null, v.title), make('small', null, date(v.date) + ' \u00b7 ' + n(v.views) + ' views \u00b7 ' + n(v.likes) + ' likes'));
+      vids.append(a);
+    }
+  }
+  let action = 'connect';
+  window.addEventListener('jarvis:youtube', (e) => {
+    const s = e.detail;
+    card.hidden = !s.ready; if (!s.ready) return;
+    let c = read(), msg = '';
+    if (s.yt) { c = snapshot(s.yt); try { localStorage.setItem(KEY, JSON.stringify(c)); } catch (err) {} }
+    const seen = c && !s.yt ? 'Last updated ' + new Date(c.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '. ' : '';
+    if (s.yt) { action = 'refresh'; msg = s.yt.anErr ? s.yt.anErr : ''; }
+    else if (!s.on) { action = 'connect'; msg = seen || 'Connect Google and pick the account that owns your channel. Read only.'; }
+    else if (!s.allowed) { action = 'allow'; msg = 'Google is connected without YouTube permission. Tap Allow YouTube and tick the YouTube boxes.'; }
+    else if (s.err) { action = 'refresh'; msg = s.err; }
+    else { action = 'refresh'; msg = seen + 'Loading your channel\u2026'; }
+    paint(c);
+    $('#ytMsg').textContent = msg;
+    $('#ytBtn').textContent = action === 'connect' ? 'Connect Google' : action === 'allow' ? 'Allow YouTube' : 'Refresh';
+  });
+  $('#ytBtn').addEventListener('click', () => {
+    if (action === 'allow') { $('#gOut').click(); $('#gConnect').click(); }
+    else $(action === 'connect' ? '#gConnect' : '#gRefresh').click();
+  });
+})();

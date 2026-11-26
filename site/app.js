@@ -1000,7 +1000,7 @@ function renderAnswer(text) {
   const cited = new Set();
   const byTitle = new Map(S.nodes.map((n) => [n.title.toLowerCase(), n]));
   const inline = (host, str) => {                                         // [[note]], **bold**, `code`; text only, never HTML
-    str.split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)/g).forEach((part) => {
+    str.split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s](?:[^*]*[^*\s])?\*)/g).forEach((part) => {
       if (!part) return;
       const m = part.match(/^\[\[([^\]]+)\]\]$/);
       if (m) {
@@ -1013,6 +1013,7 @@ function renderAnswer(text) {
         host.append(b);
       } else if (/^(\*\*|__)/.test(part) && part.length > 4) { const st = el('strong'); inline(st, part.slice(2, -2)); host.append(st); }
       else if (part.length > 2 && part[0] === '`' && part.endsWith('`')) host.append(el('code', null, part.slice(1, -1)));
+      else if (/^\*[^*\s](?:[^*]*[^*\s])?\*$/.test(part)) host.append(el('em', null, part.slice(1, -1)));
       else host.append(document.createTextNode(part.replace(/\*\*/g, '')));
     });
   };
@@ -1718,7 +1719,7 @@ const gg = (() => {
       const up = c.contentDetails && c.contentDetails.relatedPlaylists && c.contentDetails.relatedPlaylists.uploads;
       if (up) {
         const ids = ((await ytApi(B + 'playlistItems?part=contentDetails&maxResults=50&playlistId=' + up)).items || []).map((i) => i.contentDetails.videoId);
-        if (ids.length) y.vids = ((await ytApi(B + 'videos?part=snippet,statistics,contentDetails&id=' + ids.join(','))).items || []).map((v) => ({ id: v.id, title: v.snippet.title, date: (v.snippet.publishedAt || '').slice(0, 10), views: +(v.statistics || {}).viewCount || 0, likes: +(v.statistics || {}).likeCount || 0, comments: +(v.statistics || {}).commentCount || 0, len: isoDur(v.contentDetails && v.contentDetails.duration) }));
+        if (ids.length) y.vids = ((await ytApi(B + 'videos?part=snippet,statistics,contentDetails,status&id=' + ids.join(','))).items || []).map((v) => ({ id: v.id, pub: !v.status || v.status.privacyStatus === 'public', title: v.snippet.title, date: (v.snippet.publishedAt || '').slice(0, 10), views: +(v.statistics || {}).viewCount || 0, likes: +(v.statistics || {}).likeCount || 0, comments: +(v.statistics || {}).commentCount || 0, len: isoDur(v.contentDetails && v.contentDetails.duration) }));
       }
       try {
         const A = 'https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE';
@@ -1761,10 +1762,11 @@ const gg = (() => {
   function render(msg) {
     const st = $('#gStatus'), ag = $('#gAgenda');
     const on = live();
+    window.dispatchEvent(new CustomEvent('jarvis:youtube', { detail: { ready: !!CID, on, allowed: canYT, yt: data.yt || null, err: data.ytErr || '' } }));   // channel panel (jarvis.js)
     $('#gConnect').hidden = on; $('#gRefresh').hidden = !on; $('#gOut').hidden = !on;
     ag.replaceChildren();
     if (!CID) { st.textContent = 'Needs a Google client ID in site/config.js (see the README).'; $('#gConnect').hidden = true; return; }
-    st.textContent = msg || (on ? 'Connected. Ask Jarvis: "What is on my calendar today?", "Any new emails?" or "Email Anna that the meeting moved to Thursday". Nothing is sent until you tap Send.' : 'Not connected. Your calendar and Gmail are read live in this browser and never saved.');
+    st.textContent = msg || (on ? ($('#ytp') ? 'Connected. Nothing is sent until you tap Send.' : 'Connected. Ask Jarvis: "What is on my calendar today?", "Any new emails?" or "Email Anna that the meeting moved to Thursday". Nothing is sent until you tap Send.') : 'Not connected. Your calendar and Gmail are read live in this browser and never saved.');
     if (!on) return;
     const upcoming = data.events.filter((e) => e.en > new Date()).slice(0, 4);
     for (const e of upcoming) {
@@ -1774,7 +1776,8 @@ const gg = (() => {
     }
     if (!upcoming.length && data.cal) ag.append(el('div', 'ev', 'No upcoming events this week.'));
     if (data.unread != null) ag.append(el('div', 'mail', data.unread + ' unread in your inbox'));
-    if (data.yt) ag.append(el('div', 'mail', 'YouTube ' + data.yt.name + ': ' + (data.yt.subs == null ? '' : n0(data.yt.subs) + ' subscribers, ') + (data.yt.an ? n0(data.yt.an.views) + ' views in 28 days' : n0(data.yt.views) + ' views in total')));
+    if ($('#ytp')) { /* the Whisky channel panel shows YouTube */ }
+    else if (data.yt) ag.append(el('div', 'mail', 'YouTube ' + data.yt.name + ': ' + (data.yt.subs == null ? '' : n0(data.yt.subs) + ' subscribers, ') + (data.yt.an ? n0(data.yt.an.views) + ' views in 28 days' : n0(data.yt.views) + ' views in total')));
     else if (!canYT) ag.append(el('div', 'mail', 'YouTube: tap Sign out, then Connect Google again to allow YouTube.'));
     else if (data.ytErr) ag.append(el('div', 'mail', 'YouTube: ' + data.ytErr));
   }
@@ -1808,7 +1811,7 @@ const gg = (() => {
   function signOut() {
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch (e) {}
     token = ''; exp = 0; canWrite = false; canCal = false; canYT = false; data.yt = null; contacts = []; book = []; bookAt = 0; data.cal = data.mail = ''; data.events = []; data.unread = null; data.from = [];
-    try { localStorage.removeItem('brain.gtok'); localStorage.removeItem('brain.gconn'); } catch (e) {}
+    try { localStorage.removeItem('brain.gtok'); localStorage.removeItem('brain.gconn'); localStorage.removeItem('brain.ytcache'); } catch (e) {}
     hideCompose();
     render();
   }

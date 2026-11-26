@@ -150,7 +150,7 @@ body.jarvis #orbc { display: none; }
 body.jarvis.no3d #orbc { display: block; width: 100%; }
 body.jarvis #orb::after {
   content: "J.A.R.V.I.S."; position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
-  font: 700 clamp(9px, 1.05vw, 14px) var(--mono); letter-spacing: .28em; text-indent: .28em; color: #effeff;
+  font: 700 clamp(6px, calc(var(--ow, 150px) * .08), 14px) var(--mono); letter-spacing: .28em; text-indent: .28em; color: #effeff;
   text-shadow: 0 0 10px #5cf2ff, 0 0 24px #1fb6ff;
 }
 body.jarvis.no3d #orb::after { display: none; }
@@ -197,3 +197,40 @@ button.lnk { width: 100%; text-align: left; font: inherit; cursor: pointer; colo
 #budRecent .re.inc span { color: #6dffc0; }
 
 #koWrap[hidden]{display:none !important}
+
+/* ---------- larger, easier-to-read text ---------- */
+:root { --lw: 350px; --rw: 340px; }
+#dock #answer { font-size: 21px; line-height: 1.5; max-height: 150px; font-weight: 600; }
+#dock #answer.long { max-height: 56vh; max-height: 56dvh; line-height: 1.55; }
+#dock #answer .md-p, #dock #answer .md-li { margin-bottom: 10px; }
+#dock #answer .md-h { font-size: 23px; margin-top: 14px; }
+#dock #answer button { font-size: 18px; }
+#dock #answer .md-follow { position: sticky; bottom: 0; margin: 0; padding: 8px 0 2px; background: rgb(3, 22, 31); }   /* buttons stay in view */
+#dock #answer .md-follow button { min-height: 44px; }
+#dock input, #dock select, #dock button { font-size: 18px; }
+#dock .dockrow label { font-size: 17px; }
+#toast { font-size: 18px; }
+#colL .gauges figcaption { font-size: 13px; letter-spacing: .04em; }
+#colL canvas.gc { width: 108px; height: 108px; }
+#colL > section:not(:has(.gauges)) { zoom: 1.15; }
+#colR > section { zoom: 1.18; }
+@media (max-width: 759px) { #dock #answer { font-size: 19px; } }
+
+/* ---------- Whisky channel panel ---------- */
+#ytp[hidden] { display: none; }
+#colL > section#ytp h2 { font-size: 15px; }
+#ytName { font: 600 17px var(--head); color: #fff; }
+#ytName:empty, #ytStats:empty, #ytVids:empty, #ytMsg:empty { display: none; }
+#ytStats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; margin: 6px 0 4px; }
+#ytStats small { display: block; font: 12px var(--mono); color: var(--muted); text-transform: uppercase; }
+#ytStats b { font: 700 21px/1.15 var(--head); color: #fff; }
+#ytStats i { font: normal 13px var(--mono); margin-left: 6px; }
+#ytStats i.up { color: #7dffb0; } #ytStats i.dn { color: #ff8a8a; }
+#ytVids h3 { margin: 6px 0 2px; font: 600 13px var(--head); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.ytv { display: block; padding: 4px 0; border-top: 1px solid rgba(92, 242, 255, .12); text-decoration: none; }
+.ytv span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 600 15px/1.35 var(--head); color: #effeff; }
+.ytv small { font: 12px var(--mono); color: var(--muted); }
+#ytMsg { margin-top: 8px; font-size: 15px; line-height: 1.4; color: var(--muted); }
+.ytbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+#colL .ytbtns .gbtn { font-size: 15px; line-height: 20px; padding: 9px 14px; box-sizing: border-box; text-decoration: none; display: inline-block; }
+#colL .gauges ~ section#ytp { padding-bottom: 10px; }
