@@ -583,7 +583,7 @@ const BRAIN_SYSTEM = `You are J.A.R.V.I.S., the assistant for the user's persona
 For questions about the user's own projects, calendar or mail, answer from the notes provided below (they may include live calendar, Gmail and web results). For any other question, answer from your general knowledge.
 Keep quick facts short; give a fuller answer when the question needs one. Plain language, no preamble.
 Whenever you mention a note from the knowledge base, write its exact title in double square brackets, like [[Seizure Watch]].
-Never invent details about the user.`;
+Never invent details about the user.` + ' Never draw pictures with text characters and never use LaTeX math notation.';
 // Best free Groq models first (the old Llama ones left Groq's free plan in August 2026)
 const GROQ_PREF = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 let groqModel = '';
@@ -596,6 +596,10 @@ async function groqModels() {
   } catch (e) { return GROQ_PREF.slice(); }
 }
 // Explaining things: a different brief from the short "assistant" answers
+const PLAIN_TEXT = ' Never draw pictures with text characters (no ASCII art) and never use LaTeX math notation: write formulas in plain words or symbols such as e\u207b.';
+const DIAGRAM_SYSTEM = () => `You are J.A.R.V.I.S. The user wants a diagram. Reply with exactly one \`\`\`mermaid code block, then two to four plain sentences explaining it.
+Rules for the code: the first line is "flowchart TD" (or "flowchart LR" when there are 4 boxes or fewer). Use 4 to 9 boxes. Give every box a short id (A, B, C) and put every label in double quotes, like A["Anode, negative side<br/>releases electrons"]. Label arrows like A -->|"electrons"| B. No style lines, no subgraphs, no click lines, no HTML except <br/>. Keep each label line under 6 words.
+Be accurate and never invent figures. Write in the language of the request.` + PLAIN_TEXT;
 const EXPLAIN_SYSTEM = () => `You are J.A.R.V.I.S., a brilliant, patient teacher who can explain any subject. Today is ${new Date().toLocaleDateString('en-GB', { dateStyle: 'full' })}.
 Use all of your general knowledge. NOTES, when present, are extra material about the user's own projects and may be irrelevant: use them only when they help, and write a note title you mention in double square brackets, like [[Seizure Watch]].
 Shape of an explanation:
@@ -604,7 +608,7 @@ Shape of an explanation:
 3. Then "## Example" with one concrete everyday example or analogy.
 4. Add "## Watch out" only if there is a common mistake or an important exception.
 Define any jargon the first time you use it. Aim for 200 to 350 words; go longer only when asked for more detail. If asked to make it simpler, use everyday words and shorter text. If asked for an example, give a new one.
-Be honest: if you are not sure, or the facts may have changed recently, say so. Never invent figures, names or quotes. Write in the language of the question. No greeting or preamble.`;
+Be honest: if you are not sure, or the facts may have changed recently, say so. Never invent figures, names or quotes. Write in the language of the question. No greeting or preamble.` + PLAIN_TEXT;
 const IS_GEM = () => !!GKEY() && !/^gsk_/.test(GKEY());
 let gemModel = '';
 const fetchT = (url, opts, ms) => { const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms); return fetch(url, { ...(opts || {}), signal: ac.signal }).catch((e) => { throw new Error(e && e.name === 'AbortError' ? 'the service did not answer in ' + Math.round(ms / 1000) + 's' : e.message); }).finally(() => clearTimeout(t)); };
@@ -734,7 +738,7 @@ async function brainFetch(body) {
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         const ctx = (body.notes || []).slice(0, 6).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 900)).join('\n\n');
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1500) });
-        const answer = await groqChatDirect([{ role: 'system', content: EXPLAIN_SYSTEM() + (ctx ? '\n\nNOTES:\n\n' + ctx : '') }, ...msgs], 1600, true);
+        const answer = await groqChatDirect([{ role: 'system', content: (body.diagram ? DIAGRAM_SYSTEM() : EXPLAIN_SYSTEM()) + (ctx ? '\n\nNOTES:\n\n' + ctx : '') }, ...msgs], 1600, true);
         return fakeRes({ answer, explained: true, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
       if (body.question && body.live && GKEY() && !nativeSearchDown()) {                                 // needs current facts: let the AI search the web itself
@@ -1001,7 +1005,7 @@ function retrieve(question) {
   return withSnippets(top.length ? top : NOTES.slice(0, 20), question);
 }
 
-function renderAnswer(text) {
+function renderAnswer(text, opts) {
   text = String(text);
   const box = $('#answer');
   box.replaceChildren();
@@ -1027,9 +1031,19 @@ function renderAnswer(text) {
       else host.append(document.createTextNode(part.replace(/\*\*/g, '')));
     });
   };
+  let fence = null;
+  const closeFence = () => {
+    const code = fence.lines.join('\n').trim();
+    if (code && (fence.lang === 'mermaid' || /^(?:flowchart|graph|mindmap|sequenceDiagram)\b/.test(code))) box.append(diagrams.make(code, opts && opts.open));
+    else if (code) box.append(el('pre', 'md-pre', fence.lines.join('\n')));
+    fence = null;
+  };
   text.replace(/\r/g, '').split('\n').forEach((raw) => {
     const line = raw.trim();
-    if (!line || /^(```.*|-{3,}|\|?[\s:|-]+\|)$/.test(line)) return;
+    if (fence) { if (/^```/.test(line)) closeFence(); else fence.lines.push(raw); return; }
+    const f = line.match(/^```\s*([\w-]*)/);
+    if (f) { fence = { lang: f[1].toLowerCase(), lines: [] }; return; }
+    if (!line || /^(-{3,}|\|?[\s:|-]+\|)$/.test(line)) return;
     const h = line.match(/^#{1,6}\s+(.*)$/), li = line.match(/^(?:[-*\u2022]|(\d+[.)]))\s+(.*)$/);
     let row;
     if (h) { row = el('div', 'md-h'); inline(row, h[1]); }
@@ -1037,10 +1051,53 @@ function renderAnswer(text) {
     else { row = el('div', 'md-p'); inline(row, line.replace(/^\||\|$/g, '').replace(/\s*\|\s*/g, ' \u00b7 ')); }
     box.append(row);
   });
-  box.classList.toggle('long', text.length > 260);
+  if (fence) closeFence();
+  box.classList.toggle('long', text.length > 260 || text.includes('```'));
   S.cited = cited;
   S.dirty = true;
 }
+
+/* ---------- diagrams: the AI writes a small description (Mermaid), drawn here by the library in vendor/ ---------- */
+const diagrams = (() => {
+  let lib = null, n = 0;
+  const load = () => lib || (lib = new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = 'vendor/mermaid.min.js';
+    s.onload = () => {
+      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', flowchart: { useMaxWidth: true },
+        themeVariables: { darkMode: true, background: '#04121a', primaryColor: '#0b3a4a', primaryTextColor: '#ffffff', primaryBorderColor: '#5cf2ff', lineColor: '#5cf2ff', textColor: '#ffffff', edgeLabelBackground: '#0a2733', fontSize: '20px', fontFamily: 'Rajdhani, system-ui, sans-serif' } });
+      res(window.mermaid);
+    };
+    s.onerror = () => { lib = null; s.remove(); rej(new Error('the drawing tool did not load')); };
+    document.head.append(s);
+  }));
+  const close = () => { const o = document.getElementById('diagFull'); if (o) o.remove(); };
+  function full(svg) {
+    close();
+    const o = el('div'); o.id = 'diagFull';
+    const pic = el('div', 'pic'); pic.innerHTML = svg;
+    const x = el('button', null, 'Close'); x.type = 'button'; x.onclick = close;
+    o.append(x, pic); document.body.append(o);
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  function make(code, openNow) {
+    const host = el('div', 'md-diagram'); host.append(el('div', 'muted', 'Drawing the diagram\u2026'));
+    const id = 'jvd' + (++n);
+    load().then(async (m) => {
+      const { svg } = await m.render(id, code);                            // strict mode: the library cleans the drawing, no scripts or links
+      const pic = el('div', 'pic'); pic.innerHTML = svg; pic.onclick = () => full(svg);
+      const b = el('button', null, 'Full screen'); b.type = 'button'; b.onclick = () => full(svg);
+      host.replaceChildren(pic, b);
+      if (openNow) full(svg);
+    }).catch((e) => {
+      const junk = document.getElementById('d' + id); if (junk) junk.remove();
+      vlog('diagram failed: ' + String((e && e.message) || e).slice(0, 160));
+      const b = el('button', null, 'Redraw'); b.type = 'button'; b.onclick = () => ask('Draw that diagram again, keeping it simple');
+      host.replaceChildren(el('div', 'err', 'Could not draw this diagram.'), b);
+    });
+    return host;
+  }
+  return { make, close };
+})();
 
 /* ---------- iPad audio mode ----------
    Safari refuses the microphone (InvalidStateError "AudioSession category is not compatible") unless the page's audio
@@ -1310,7 +1367,7 @@ function say(text) {
       if ((!talking && Date.now() - t0 > 2500) || Date.now() - t0 > 60000) { clearInterval(iv); wake.pause(false); }
     }, 400);
   } catch (e) {}
-  const clean = text.replace(/\*\*|__|`/g, '').replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
+  const clean = noCode(text).replace(/\*\*|__|`/g, '').replace(/\[\[|\]\]/g, '').replace(/^[•\-]\s*/gm, '').replace(/\s+/g, ' ').trim();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   voiceBox.stop();
   if (voiceBox.koOn()) {
@@ -2318,12 +2375,15 @@ function followButtons(box, answer) {
   add('Stop', () => { voiceBox.stop(); if ('speechSynthesis' in window) speechSynthesis.cancel(); orb.set('idle'); });
   box.append(bar);
 }
-const plain = (t) => String(t).replace(/^#{1,6}\s+(.*)$/gm, '$1.').replace(/\*\*|__|`|\[\[|\]\]/g, '').replace(/^\s*[\u2022*-]\s+/gm, '').replace(/\s+/g, ' ').trim();
-async function explain(question) {
+const plain = (t) => noCode(t).replace(/^#{1,6}\s+(.*)$/gm, '$1.').replace(/\*\*|__|`|\[\[|\]\]/g, '').replace(/^\s*[\u2022*-]\s+/gm, '').replace(/\s+/g, ' ').trim();
+// "draw / create a diagram of ..."
+const isDiagram = (q) => { const t = String(q).replace(LEAD, '').trim(); return /\b(?:diagrams?|flow ?charts?|mind ?maps?|schematics?)\b/i.test(t) || /^(?:draw|sketch)\b/i.test(t); };
+const noCode = (t) => String(t).replace(/```[\s\S]*?(?:```|$)/g, ' ');
+async function explain(question, drawing) {
   const box = $('#answer');
   chat.busy = true; orb.set('thinking'); $('#askGo').disabled = true;
   box.classList.remove('long');
-  box.replaceChildren(el('span', 'muted', 'Working out a clear explanation\u2026'));
+  box.replaceChildren(el('span', 'muted', drawing ? 'Preparing your diagram\u2026' : 'Working out a clear explanation\u2026'));
   S.cited = new Set();
   try {
     const follow = isFollowUp(question);
@@ -2334,18 +2394,18 @@ async function explain(question) {
     if (!follow && /\b(?:latest|news|current(?:ly)?|right now|today|this (?:week|month|year)|recent(?:ly)?|prices?|2026|2027)\b/i.test(question)) { try { web = webNotes(await webLookup(question)).slice(0, 3); } catch (e) {} }
     const mine = await gg.notesFor(question);
     const tA = Date.now();
-    const r = await Promise.race([brainFetch({ explain: true, question, notes: [...web, ...mine, ...own].slice(0, 6), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 130000))]);
+    const r = await Promise.race([brainFetch({ explain: true, diagram: !!drawing, question, notes: [...web, ...mine, ...own].slice(0, 6), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 130000))]);
     const data = await r.json().catch(() => ({}));
     vlog('explain: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
     chat.history = chat.history.slice(-8);
-    renderAnswer(data.answer);
+    renderAnswer(data.answer, { open: !!drawing });
     if (!data.explained) box.append(el('div', 'muted', 'For full explanations, save a free Groq or Gemini key under Systems & keys.'));
     else followButtons(box, data.answer);
     if (OL.on()) box.append(el('div', 'muted', data.via === 'ollama' ? 'Answered on this PC by ' + data.model + '.' : 'Answered by the cloud AI.'));
     orb.set('idle');
-    const first = data.answer.split(/\n\s*\n|\n(?=#)/).map((p) => p.trim()).find((p) => p && !p.startsWith('#')) || data.answer;
+    const first = noCode(data.answer).trim().split(/\n\s*\n|\n(?=#)/).map((p) => p.trim()).find((p) => p && !p.startsWith('#')) || noCode(data.answer);
     say(first);                                                          // speak the summary; "Read it all" reads the rest
   } catch (e) {
     vlog('explain failed: ' + e.message);
@@ -2358,6 +2418,7 @@ async function ask(question) {
   if (chat.busy || !question) return;
   { const sw = await OL.command(question); if (sw) { renderAnswer(sw); orb.set('idle'); say(sw); return; } }   // "switch to <model>"
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
+  if (AI_READY() && isDiagram(question)) { await explain(question, true); return; }
   if (AI_READY() && (isExplain(question) || isFollowUp(question))) { await explain(question); return; }
   if (svc.match(question)) { await svc.handle(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }
