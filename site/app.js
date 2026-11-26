@@ -645,16 +645,16 @@ async function gemGenerate(payload, fast, ms) {                              // 
   gemGenerate.sources = (((cand && cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((c) => c.web && (c.web.title || c.web.uri)).filter(Boolean));
   return String(((cand && cand.content && cand.content.parts) || []).map((x) => x.text || '').join('')).trim();
 }
-// Explanations: try the stronger model first, but never leave the user waiting: switch to the quick one if it is slow, busy or silent
+// Answers: try the stronger model first, but never leave the user waiting: switch to the quick one if it is slow, busy, silent or over quota
 let gemSlowUntil = 0;
-async function gemExplain(payload) {
+async function gemAnswer(payload, long) {
   if (Date.now() > gemSlowUntil) {
-    try { const t = await gemGenerate(payload, false, 20000); if (t) return t; }
-    catch (e) { if (!/did not answer|overloaded|unavailable|high demand|quota|exceeded|rate.?limit|resource.?exhausted|internal/i.test(e.message)) throw e; vlog('explain: main model failed, ' + String(e.message).slice(0, 80)); }
+    try { const t = await gemGenerate(payload, false, long ? 20000 : 12000); if (t) return t; }
+    catch (e) { if (!/did not answer|overloaded|unavailable|high demand|quota|exceeded|rate.?limit|resource.?exhausted|internal/i.test(e.message)) throw e; vlog('answer: main model failed, ' + String(e.message).slice(0, 80)); }
     gemSlowUntil = Date.now() + 5 * 60 * 1000;                            // go straight to the quick model for a few minutes
-    vlog('explain: switching to the quick model');
+    vlog('answer: switching to the quick model');
   }
-  const t = await gemGenerate(payload, true, 40000);
+  const t = await gemGenerate(payload, true, long ? 40000 : 20000);
   if (!t) throw new Error('Gemini returned an empty answer. Please ask again.');
   return t;
 }
@@ -668,7 +668,7 @@ async function groqChatDirect(messages, max_tokens, long) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
     const payload = { systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: long ? 4096 : Math.max(max_tokens, 2048), temperature: 0.3 } };
-    return long ? gemExplain(payload) : gemGenerate(payload);
+    return gemAnswer(payload, long);
   }
   const call = (model) => {
     const oss = /gpt-oss/.test(model);                                    // these think before answering: give them room, keep the thinking out of the reply
@@ -718,6 +718,8 @@ async function webLookup(query) {
 }
 const webNotes = (res) => (res || []).slice(0, 6).map((x) => ({ title: x.title, type: 'web', text: x.text + ' (' + x.url + ')' }));
 const fakeRes = (obj, ok = true, status = 200) => ({ ok, status, json: async () => obj });
+// An older deployed Worker can only answer from the notes: its "add a note" reply is a non-answer, so show what really went wrong instead
+const NOTES_ONLY = /\bnotes?\b[^.]{0,50}\b(?:do(?:es)? not|don't|doesn't)\s+(?:contain|include|mention|cover|have)\b|\bdo(?: not|n't) have a note\b|\bnote\b[^.]{0,90}\b(?:could|can|should|might) be added\b|\bno (?:information|answer|details?)\b[^.]{0,50}\bnotes\b/i;
 // Same job as the Worker's text modes, but done here when a Groq key is saved. Falls back to the Worker.
 async function brainFetch(body) {
   if (GKEY() || (OL.on() && !body.search)) {
@@ -834,6 +836,14 @@ async function brainFetch(body) {
   if (!CHAT_URL) return fakeRes({ error: 'Add a free AI key in the panel (Free AI key), or set up the Worker.' }, false, 400);
   const r = await fetchT(CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, body.explain ? 45000 : 28000);
   if (!r.ok && brainFetch.lastErr) { const d = await r.json().catch(() => ({})); return fakeRes({ error: brainFetch.lastErr + ' | ' + (d.error || r.status) }, false, r.status); }
+  if (r.ok && body.question) {
+    const d = await r.json().catch(() => ({}));
+    if (NOTES_ONLY.test(String(d.answer || '').slice(0, 300))) {
+      try { vlog('answer: the backup service could only answer from the notes' + (brainFetch.lastErr ? '; the AI key failed: ' + String(brainFetch.lastErr).slice(0, 120) : '')); } catch (e) {}
+      return fakeRes({ error: GKEY() ? 'your AI key did not answer' + (brainFetch.lastErr ? ' (' + String(brainFetch.lastErr).slice(0, 200) + ')' : '') + '. Please try again in a minute.' : 'no AI key is saved on this device. Add a free Gemini or Groq key under Systems, Voice, AI keys.' }, false, 502);
+    }
+    return fakeRes(d, true, r.status);
+  }
   return r;
 }
 /* ---------- VoiceStudio: optional local voice engine on your own PC (https://github.com/debpalash/VoiceStudio) ----------
