@@ -186,3 +186,5 @@ label.voice select { max-width: 100%; }
 #diagFull button { align-self: flex-end; min-height: 48px; padding: 8px 26px; font: 700 20px var(--head); color: var(--accent); background: rgba(92, 242, 255, .1); border: 1px solid var(--accent); border-radius: 2px; cursor: pointer; }
 #diagFull .pic { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 #diagFull .pic svg { width: 100% !important; height: 100% !important; max-width: none !important; }
+.md-diagram .pic img { display: block; margin: 0 auto; width: 100%; max-height: 44dvh; object-fit: contain; border-radius: 6px; }
+#diagFull .pic img { width: 100%; height: 100%; object-fit: contain; }

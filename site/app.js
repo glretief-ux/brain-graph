@@ -600,6 +600,15 @@ const PLAIN_TEXT = ' Never draw pictures with text characters (no ASCII art) and
 const DIAGRAM_SYSTEM = () => `You are J.A.R.V.I.S. The user wants a diagram. Reply with exactly one \`\`\`mermaid code block, then two to four plain sentences explaining it.
 Rules for the code: the first line is "flowchart TD" (or "flowchart LR" when there are 4 boxes or fewer). Use 4 to 9 boxes. Give every box a short id (A, B, C) and put every label in double quotes, like A["Anode, negative side<br/>releases electrons"]. Label arrows like A -->|"electrons"| B. No style lines, no subgraphs, no click lines, no HTML except <br/>. Keep each label line under 6 words.
 Be accurate and never invent figures. Every arrow must be true: it joins the two things that something really passes between, and its label names what passes (in a battery, electrons go only through the outside circuit, ions only through the electrolyte). Write in the language of the request.` + PLAIN_TEXT;
+const PICTURE_SYSTEM = () => `You are J.A.R.V.I.S. The user wants a picture that explains something, like a good textbook or science-website illustration. Reply with exactly one \`\`\`svg code block, then two to four plain sentences explaining it.
+Rules for the SVG: viewBox="0 0 1000 700", a white background rectangle, a title at the top. DRAW THE THING ITSELF with shapes (a cutaway, cross-section or scene with its real parts), not a flowchart of text boxes. Use bold distinct colours. Label each part with large dark text (font-size 24 to 34) and a thin leader line to it. Show movement with coloured arrows, and where helpful moving dots using <animateMotion> with a negative begin value. Text must never overlap other text or leave the canvas; check each label's width (about 0.55 x font-size per character). Use only svg, g, rect, circle, ellipse, line, polyline, polygon, path, text, tspan, defs, marker, linearGradient, stop and animateMotion. No scripts, images, links, foreignObject or CSS. Keep it under 120 elements and always close </svg>.
+Every part, direction and label must be physically correct; leave out anything you are unsure of. Write in the language of the request.` + PLAIN_TEXT;
+// pictures drawn and checked in advance, shown at once
+const READY = [{
+  test: (q) => /\bbatter(?:y|ies)\b/i.test(q) && !/\b(?:car|lead|acid|alkaline|nickel|sodium|zinc|solid|flow|charg\w*|recharg\w*|wir\w*|connect\w*|series|parallel|management|recycl\w*|made|make|manufactur\w*|fire|monitor|inverter|solar|ups|phone|tesla|ev)\b/i.test(q),
+  src: 'pictures/battery.svg',
+  text: 'The anode gives up electrons, which travel through the outside circuit and light the lamp on their way to the cathode. At the same time, positive ions cross the electrolyte and separator inside the battery. The picture shows a lithium-ion battery; other types use different materials and ions.'
+}];
 const EXPLAIN_SYSTEM = () => `You are J.A.R.V.I.S., a brilliant, patient teacher who can explain any subject. Today is ${new Date().toLocaleDateString('en-GB', { dateStyle: 'full' })}.
 Use all of your general knowledge. NOTES, when present, are extra material about the user's own projects and may be irrelevant: use them only when they help, and write a note title you mention in double square brackets, like [[Seizure Watch]].
 Shape of an explanation:
@@ -651,18 +660,18 @@ async function gemGenerate(payload, fast, ms) {                              // 
 }
 // Answers: try the stronger model first, but never leave the user waiting: switch to the quick one if it is slow, busy, silent or over quota
 let gemSlowUntil = 0;
-async function gemAnswer(payload, long) {
+async function gemAnswer(payload, long, picture) {
   if (Date.now() > gemSlowUntil) {
-    try { const t = await gemGenerate(payload, false, long ? 20000 : 12000); if (t) return t; }
+    try { const t = await gemGenerate(payload, false, picture ? 60000 : long ? 20000 : 12000); if (t) return t; }
     catch (e) { if (!/did not answer|overloaded|unavailable|high demand|quota|exceeded|rate.?limit|resource.?exhausted|internal/i.test(e.message)) throw e; vlog('answer: main model failed, ' + String(e.message).slice(0, 80)); }
     gemSlowUntil = Date.now() + 5 * 60 * 1000;                            // go straight to the quick model for a few minutes
     vlog('answer: switching to the quick model');
   }
-  const t = await gemGenerate(payload, true, long ? 40000 : 20000);
+  const t = await gemGenerate(payload, true, picture ? 55000 : long ? 40000 : 20000);
   if (!t) throw new Error('Gemini returned an empty answer. Please ask again.');
   return t;
 }
-async function groqChatDirect(messages, max_tokens, long) {
+async function groqChatDirect(messages, max_tokens, long, picture) {
   if (OL.on() && OL.ready()) {                                            // local first
     try { const t = await OL.chat(messages, max_tokens); if (t) { groqChatDirect.via = 'ollama'; return t; } throw new Error('Ollama gave an empty answer'); }
     catch (e) { OL.fail(); const why = (e.name === 'AbortError' ? 'Ollama took too long' : e.message === 'Failed to fetch' ? 'Ollama is not reachable' : e.message); if (!GKEY()) throw new Error(why); }
@@ -671,14 +680,14 @@ async function groqChatDirect(messages, max_tokens, long) {
   if (IS_GEM()) {
     const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const contents = messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    const payload = { systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: long ? 4096 : Math.max(max_tokens, 2048), temperature: 0.3 } };
-    return gemAnswer(payload, long);
+    const payload = { systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: picture ? 16384 : long ? 4096 : Math.max(max_tokens, 2048), temperature: 0.3 } };
+    return gemAnswer(payload, long, picture);
   }
   const call = (model) => {
     const oss = /gpt-oss/.test(model);                                    // these think before answering: give them room, keep the thinking out of the reply
     const body = { model, messages, temperature: 0.3, max_completion_tokens: oss ? max_tokens + (long ? 1200 : 700) : max_tokens };
     if (oss) { body.reasoning_effort = long ? 'medium' : 'low'; body.include_reasoning = false; }
-    return fetchT('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify(body) }, long ? 30000 : 15000);
+    return fetchT('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GKEY() }, body: JSON.stringify(body) }, picture ? 60000 : long ? 30000 : 15000);
   };
   const tried = [];
   let queue = [groqModel || GROQ_PREF[0]], listed = false, limited = false, last = '';
@@ -738,7 +747,7 @@ async function brainFetch(body) {
         if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
         const ctx = (body.notes || []).slice(0, 6).map((n) => '## ' + String(n.title).slice(0, 120) + ' (' + String(n.type).slice(0, 30) + ')\n' + String(n.text).slice(0, 900)).join('\n\n');
         msgs.push({ role: 'user', content: String(body.question).slice(0, 1500) });
-        const answer = await groqChatDirect([{ role: 'system', content: (body.diagram ? DIAGRAM_SYSTEM() : EXPLAIN_SYSTEM()) + (ctx ? '\n\nNOTES:\n\n' + ctx : '') }, ...msgs], 1600, true);
+        const answer = await groqChatDirect([{ role: 'system', content: (body.diagram === 'chart' ? DIAGRAM_SYSTEM() : body.diagram ? PICTURE_SYSTEM() : EXPLAIN_SYSTEM()) + (ctx ? '\n\nNOTES:\n\n' + ctx : '') }, ...msgs], body.diagram === 'picture' ? 3500 : 1600, true, body.diagram === 'picture');
         return fakeRes({ answer, explained: true, via: groqChatDirect.via, model: groqChatDirect.via === 'ollama' ? OL.model() : '' });
       }
       if (body.question && body.live && GKEY() && !nativeSearchDown()) {                                 // needs current facts: let the AI search the web itself
@@ -1009,7 +1018,9 @@ function retrieve(question) {
 const MM_HEAD = /^(?:(?:flowchart|graph)\s+(?:TD|TB|LR|RL|BT)\b|(?:mindmap|sequenceDiagram)\s*$)/;
 const MM_LINE = /^[A-Za-z]\w*\s*(?:[\[({]{1,2}\s*"|[\[({].*[\])}]\s*(?:-->|---|-\.->|==>)|(?:-->|---|-\.->|==>)\s*(?:\||[A-Za-z]\w*\s*(?:[\[({]|;?\s*$)))/;
 function tidyDiagram(text) {
-  const out = String(text).replace(/\r/g, '').replace(/```[ \t]*([^\n`]*)\n([\s\S]*?)(?:```|$)/g, (m, info, body) => {
+  let src = String(text).replace(/\r/g, '').replace(/```[ \t]*(?:xml|html|svg)?[ \t]*\n\s*(?:<\?xml[^>]*>\s*)?(?=<svg[\s>])/gi, '```svg\n');
+  if (!src.includes('```') && /<svg[\s>]/.test(src)) src = src.replace(/<svg[\s>][\s\S]*?(?:<\/svg>|$)/, (m) => '\n```svg\n' + m + '\n```\n');
+  const out = src.replace(/```[ \t]*([^\n`]*)\n([\s\S]*?)(?:```|$)/g, (m, info, body) => {
     info = info.trim();
     if (info && !/^(?:mermaid|flowchart|graph|mindmap|sequenceDiagram|TD|TB|LR|RL|BT|text|plaintext)\b/i.test(info)) return m;
     let code = (info.replace(/^(?:mermaid|plaintext|text)\b/i, '').trim() + '\n' + body).trim().replace(/^mermaid\s*\n/i, '');
@@ -1060,7 +1071,8 @@ function renderAnswer(text, opts) {
   let fence = null;
   const closeFence = () => {
     const code = fence.lines.join('\n').trim();
-    if (code && (fence.lang === 'mermaid' || /^(?:flowchart|graph|mindmap|sequenceDiagram)\b/.test(code))) box.append(diagrams.make(code, opts && opts.open));
+    if (code && (fence.lang === 'svg' || /^<svg[\s>]/.test(code))) box.append(diagrams.picture(code, opts && opts.open));
+    else if (code && (fence.lang === 'mermaid' || /^(?:flowchart|graph|mindmap|sequenceDiagram)\b/.test(code))) box.append(diagrams.make(code, opts && opts.open));
     else if (code) box.append(el('pre', 'md-pre', fence.lines.join('\n')));
     fence = null;
   };
@@ -1105,24 +1117,43 @@ const diagrams = (() => {
     o.append(x, pic); document.body.append(o);
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  const retry = (host, why) => {
+    vlog('diagram failed: ' + why.slice(0, 160));
+    const b = el('button', null, 'Redraw'); b.type = 'button'; b.onclick = () => ask('Draw that diagram again, keeping it simple');
+    host.replaceChildren(el('div', 'err', 'Could not draw this diagram.'), b);
+  };
+  const frame = (host, content, openNow) => {                              // content: markup for the picture, shown small here and large on tap
+    const pic = el('div', 'pic'); pic.innerHTML = content; pic.onclick = () => full(content);
+    const b = el('button', null, 'Full screen'); b.type = 'button'; b.onclick = () => full(content);
+    host.replaceChildren(pic, b);
+    if (openNow) full(content);
+  };
+  // a coloured picture (SVG). Shown only as an <img>, where the browser runs no scripts and loads nothing from elsewhere
+  function picture(code, openNow) {
+    const host = el('div', 'md-diagram');
+    const a = code.indexOf('<svg'), z = code.lastIndexOf('</svg>');
+    let s = a < 0 || z < a ? '' : code.slice(a, z + 6).replace(/&nbsp;/g, '&#160;').replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;');
+    const head = s.slice(0, s.indexOf('>') + 1);
+    if (s && !/\sxmlns=/.test(head)) s = s.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    if (s.includes('xlink:') && !s.includes('xmlns:xlink')) s = s.replace('<svg', '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
+    if (!s || new DOMParser().parseFromString(s, 'image/svg+xml').getElementsByTagName('parsererror').length) { retry(host, 'the picture was incomplete or broken'); return host; }
+    frame(host, '<img alt="Diagram" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s) + '">', openNow);
+    return host;
+  }
+  const file = (src, openNow) => { const host = el('div', 'md-diagram'); frame(host, '<img alt="Diagram" src="' + src + '">', openNow); return host; };
   function make(code, openNow) {
     const host = el('div', 'md-diagram'); host.append(el('div', 'muted', 'Drawing the diagram\u2026'));
     const id = 'jvd' + (++n);
     load().then(async (m) => {
       const { svg } = await m.render(id, code);                            // strict mode: the library cleans the drawing, no scripts or links
-      const pic = el('div', 'pic'); pic.innerHTML = svg; pic.onclick = () => full(svg);
-      const b = el('button', null, 'Full screen'); b.type = 'button'; b.onclick = () => full(svg);
-      host.replaceChildren(pic, b);
-      if (openNow) full(svg);
+      frame(host, svg, openNow);
     }).catch((e) => {
       const junk = document.getElementById('d' + id); if (junk) junk.remove();
-      vlog('diagram failed: ' + String((e && e.message) || e).slice(0, 160));
-      const b = el('button', null, 'Redraw'); b.type = 'button'; b.onclick = () => ask('Draw that diagram again, keeping it simple');
-      host.replaceChildren(el('div', 'err', 'Could not draw this diagram.'), b);
+      retry(host, String((e && e.message) || e));
     });
     return host;
   }
-  return { make, close };
+  return { make, picture, file, close };
 })();
 
 /* ---------- iPad audio mode ----------
@@ -2403,7 +2434,20 @@ function followButtons(box, answer) {
 }
 const plain = (t) => noCode(t).replace(/^#{1,6}\s+(.*)$/gm, '$1.').replace(/\*\*|__|`|\[\[|\]\]/g, '').replace(/^\s*[\u2022*-]\s+/gm, '').replace(/\s+/g, ' ').trim();
 // "draw / create a diagram of ..."
-const isDiagram = (q) => { const t = String(q).replace(LEAD, '').trim(); return /\b(?:diagrams?|flow ?charts?|mind ?maps?|schematics?)\b/i.test(t) || /^(?:draw|sketch)\b/i.test(t); };
+const isDiagram = (q) => { const t = String(q).replace(LEAD, '').trim(); return /\b(?:diagrams?|flow ?charts?|mind ?maps?|schematics?|(?:picture|illustration|drawing|image) (?:of|showing) (?:how|a|an|the))\b/i.test(t) || /^(?:draw|sketch|illustrate)\b/i.test(t); };
+const drawKind = (q) => (/\b(?:flow ?charts?|mind ?maps?)\b/i.test(q) ? 'chart' : 'picture');
+function showReady(question, item) {
+  const box = $('#answer');
+  const answer = item.text;
+  chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: '[A picture was shown] ' + answer });
+  chat.history = chat.history.slice(-8);
+  renderAnswer(answer);
+  box.prepend(diagrams.file(item.src, true));
+  box.classList.add('long');
+  followButtons(box, answer);
+  orb.set('idle');
+  say(answer.split(/(?<=\.)\s/)[0]);
+}
 const noCode = (t) => String(t).replace(/```[\s\S]*?(?:```|$)/g, ' ');
 async function explain(question, drawing) {
   const box = $('#answer');
@@ -2420,13 +2464,13 @@ async function explain(question, drawing) {
     if (!follow && /\b(?:latest|news|current(?:ly)?|right now|today|this (?:week|month|year)|recent(?:ly)?|prices?|2026|2027)\b/i.test(question)) { try { web = webNotes(await webLookup(question)).slice(0, 3); } catch (e) {} }
     const mine = await gg.notesFor(question);
     const tA = Date.now();
-    const r = await Promise.race([brainFetch({ explain: true, diagram: !!drawing, question, notes: [...web, ...mine, ...own].slice(0, 6), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 130000))]);
+    const r = await Promise.race([brainFetch({ explain: true, diagram: drawing || '', question, notes: [...web, ...mine, ...own].slice(0, 6), history: chat.history }), new Promise((_, rej) => setTimeout(() => rej(new Error('The AI did not answer in time. Try again in a moment.')), 130000))]);
     const data = await r.json().catch(() => ({}));
     vlog('explain: the AI took ' + ((Date.now() - tA) / 1000).toFixed(1) + 's');
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
-    chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
-    chat.history = chat.history.slice(-8);
     data.answer = tidyDiagram(data.answer);                                 // so it is never read aloud as code
+    chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer.replace(/```svg[\s\S]*?(?:```|$)/g, '[A picture was shown]') });
+    chat.history = chat.history.slice(-8);
     renderAnswer(data.answer, { open: !!drawing });
     if (!data.explained) box.append(el('div', 'muted', 'For full explanations, save a free Groq or Gemini key under Systems & keys.'));
     else followButtons(box, data.answer);
@@ -2445,7 +2489,11 @@ async function ask(question) {
   if (chat.busy || !question) return;
   { const sw = await OL.command(question); if (sw) { renderAnswer(sw); orb.set('idle'); say(sw); return; } }   // "switch to <model>"
   if (gg.isComposeRequest(question)) { await gg.compose(question); return; }
-  if (AI_READY() && isDiagram(question)) { await explain(question, true); return; }
+  if (isDiagram(question)) {
+    const ready = drawKind(question) === 'picture' && READY.find((r) => r.test(question));
+    if (ready) { showReady(question, ready); return; }
+    if (AI_READY()) { await explain(question, drawKind(question)); return; }
+  }
   if (AI_READY() && (isExplain(question) || isFollowUp(question))) { await explain(question); return; }
   if (svc.match(question)) { await svc.handle(question); return; }
   if (gg.isEventRequest(question)) { await gg.addEventDraft(question); return; }

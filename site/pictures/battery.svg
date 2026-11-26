@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" font-family="Arial, Helvetica, sans-serif">
+<rect width="1000" height="700" rx="24" fill="#ffffff"/>
+<text x="500" y="48" font-size="36" font-weight="700" fill="#16242c" text-anchor="middle">How a battery works</text>
+<path d="M170 440 H85 V235 H915 V440 H835" fill="none" stroke="#2477d4" stroke-width="16" stroke-linejoin="round"/>
+<g stroke="#f5b800" stroke-width="8" stroke-linecap="round"><path d="M500 62V80M422 88L440 104M578 88L560 104M394 140H420M606 140H580"/></g>
+<circle cx="500" cy="147" r="55" fill="#ffe34d" stroke="#e0a800" stroke-width="5"/><path d="M478 195V160L490 140L500 160L510 140L522 160V195" fill="none" stroke="#b97700" stroke-width="5"/>
+<rect x="468" y="192" width="64" height="56" rx="8" fill="#6d7880"/><path d="M468 206H532M468 221H532M468 236H532" stroke="#3f474d" stroke-width="5"/>
+<text x="650" y="150" font-size="28" font-weight="700" fill="#16242c" text-anchor="start">Lamp</text>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-0s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-1s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-2s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-3s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-4s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-5s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-6s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<g><circle r="14" fill="#c62828" stroke="#fff" stroke-width="3"/><path d="M-7 0H7" stroke="#fff" stroke-width="4"/><animateMotion dur="8s" begin="-7s" repeatCount="indefinite" path="M170 440 H85 V235 H915 V440 H835"/></g>
+<text x="500" y="292" font-size="28" font-weight="700" fill="#b01f1f" text-anchor="middle">Electrons flow through the outside circuit  →</text>
+<rect x="150" y="400" width="30" height="80" rx="6" fill="#8c979e"/><rect x="820" y="415" width="34" height="50" rx="6" fill="#8c979e"/>
+<rect x="170" y="320" width="660" height="240" rx="30" fill="#ffe9a3"/>
+<path d="M200 320H360V560H200Q170 560 170 530V350Q170 320 200 320Z" fill="#3b9ae1"/>
+<path d="M640 320H800Q830 320 830 350V530Q830 560 800 560H640Z" fill="#e5566f"/>
+<path d="M500 326V554" stroke="#7a6a2a" stroke-width="10" stroke-dasharray="14 10"/>
+<rect x="170" y="320" width="660" height="240" rx="30" fill="none" stroke="#263238" stroke-width="7"/>
+<text x="265" y="380" font-size="34" font-weight="700" fill="#fff" text-anchor="middle">Anode</text>
+<text x="265" y="448" font-size="64" font-weight="700" fill="#fff" text-anchor="middle">−</text>
+<text x="265" y="498" font-size="26" font-weight="700" fill="#fff" text-anchor="middle">gives up</text>
+<text x="265" y="530" font-size="26" font-weight="700" fill="#fff" text-anchor="middle">electrons</text>
+<text x="735" y="380" font-size="34" font-weight="700" fill="#fff" text-anchor="middle">Cathode</text>
+<text x="735" y="448" font-size="64" font-weight="700" fill="#fff" text-anchor="middle">+</text>
+<text x="735" y="498" font-size="26" font-weight="700" fill="#fff" text-anchor="middle">takes in</text>
+<text x="735" y="530" font-size="26" font-weight="700" fill="#fff" text-anchor="middle">electrons</text>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-0s" repeatCount="indefinite" path="M378 385 H622"/></g>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-2s" repeatCount="indefinite" path="M378 385 H622"/></g>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-1s" repeatCount="indefinite" path="M378 445 H622"/></g>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-3s" repeatCount="indefinite" path="M378 445 H622"/></g>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-0.5s" repeatCount="indefinite" path="M378 505 H622"/></g>
+<g><circle r="17" fill="#ff9800" stroke="#7a4300" stroke-width="3"/><path d="M-8 0H8M0 -8V8" stroke="#fff" stroke-width="4"/><animateMotion dur="4s" begin="-2.5s" repeatCount="indefinite" path="M378 505 H622"/></g>
+<text x="500" y="598" font-size="28" font-weight="700" fill="#9a5200" text-anchor="middle">Positive ions move through the electrolyte  →</text>
+<text x="500" y="636" font-size="22" font-weight="400" fill="#37474f" text-anchor="middle">Yellow: electrolyte.  Dashed line: separator (ions pass, electrons cannot).</text>
+<text x="500" y="674" font-size="22" font-weight="400" fill="#37474f" text-anchor="middle">Lithium-ion battery in use. Charging pushes both flows backwards.</text>
+</svg>
