@@ -599,7 +599,7 @@ async function groqModels() {
 const PLAIN_TEXT = ' Never draw pictures with text characters (no ASCII art) and never use LaTeX math notation: write formulas in plain words or symbols such as e\u207b.';
 const DIAGRAM_SYSTEM = () => `You are J.A.R.V.I.S. The user wants a diagram. Reply with exactly one \`\`\`mermaid code block, then two to four plain sentences explaining it.
 Rules for the code: the first line is "flowchart TD" (or "flowchart LR" when there are 4 boxes or fewer). Use 4 to 9 boxes. Give every box a short id (A, B, C) and put every label in double quotes, like A["Anode, negative side<br/>releases electrons"]. Label arrows like A -->|"electrons"| B. No style lines, no subgraphs, no click lines, no HTML except <br/>. Keep each label line under 6 words.
-Be accurate and never invent figures. Write in the language of the request.` + PLAIN_TEXT;
+Be accurate and never invent figures. Every arrow must be true: it joins the two things that something really passes between, and its label names what passes (in a battery, electrons go only through the outside circuit, ions only through the electrolyte). Write in the language of the request.` + PLAIN_TEXT;
 const EXPLAIN_SYSTEM = () => `You are J.A.R.V.I.S., a brilliant, patient teacher who can explain any subject. Today is ${new Date().toLocaleDateString('en-GB', { dateStyle: 'full' })}.
 Use all of your general knowledge. NOTES, when present, are extra material about the user's own projects and may be irrelevant: use them only when they help, and write a note title you mention in double square brackets, like [[Seizure Watch]].
 Shape of an explanation:
@@ -1005,7 +1005,33 @@ function retrieve(question) {
   return withSnippets(top.length ? top : NOTES.slice(0, 20), question);
 }
 
+// AI models label diagrams in many ways (or not at all): turn each form into a proper ```mermaid block
+const MM_HEAD = /^(?:(?:flowchart|graph)\s+(?:TD|TB|LR|RL|BT)\b|(?:mindmap|sequenceDiagram)\s*$)/;
+const MM_LINE = /^[A-Za-z]\w*\s*(?:[\[({]{1,2}\s*"|[\[({].*[\])}]\s*(?:-->|---|-\.->|==>)|(?:-->|---|-\.->|==>)\s*(?:\||[A-Za-z]\w*\s*(?:[\[({]|;?\s*$)))/;
+function tidyDiagram(text) {
+  const out = String(text).replace(/\r/g, '').replace(/```[ \t]*([^\n`]*)\n([\s\S]*?)(?:```|$)/g, (m, info, body) => {
+    info = info.trim();
+    if (info && !/^(?:mermaid|flowchart|graph|mindmap|sequenceDiagram|TD|TB|LR|RL|BT|text|plaintext)\b/i.test(info)) return m;
+    let code = (info.replace(/^(?:mermaid|plaintext|text)\b/i, '').trim() + '\n' + body).trim().replace(/^mermaid\s*\n/i, '');
+    if (/^(?:TD|TB|LR|RL|BT)\b/.test(code)) code = 'flowchart ' + code;
+    const lines = code.split('\n').map((l) => l.trim());
+    if (!MM_HEAD.test(lines[0])) { if (!lines.some((l) => MM_LINE.test(l))) return m; code = 'flowchart TD\n' + code; }
+    return '```mermaid\n' + code + '\n```';
+  });
+  if (out.includes('```')) return out;
+  const lines = out.split('\n'), is = (l) => MM_HEAD.test(l.trim()) || MM_LINE.test(l.trim());
+  const a = lines.findIndex(is);
+  if (a < 0) return out;
+  let b = a;
+  for (let i = a + 1; i < lines.length; i++) { if (is(lines[i])) b = i; else if (lines[i].trim()) break; }
+  const head = MM_HEAD.test(lines[a].trim());
+  if (b === a) return out;
+  const code = lines.slice(a, b + 1).filter((l) => l.trim());
+  const before = lines.slice(0, a).filter((l) => l.trim().toLowerCase() !== 'mermaid');
+  return [...before, '```mermaid', ...(head ? [] : ['flowchart TD']), ...code, '```', ...lines.slice(b + 1)].join('\n');
+}
 function renderAnswer(text, opts) {
+  text = tidyDiagram(text);
   text = String(text);
   const box = $('#answer');
   box.replaceChildren();
@@ -2400,6 +2426,7 @@ async function explain(question, drawing) {
     if (!r.ok || !data.answer) throw new Error(data.error || 'No answer (' + r.status + ')');
     chat.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.answer });
     chat.history = chat.history.slice(-8);
+    data.answer = tidyDiagram(data.answer);                                 // so it is never read aloud as code
     renderAnswer(data.answer, { open: !!drawing });
     if (!data.explained) box.append(el('div', 'muted', 'For full explanations, save a free Groq or Gemini key under Systems & keys.'));
     else followButtons(box, data.answer);
