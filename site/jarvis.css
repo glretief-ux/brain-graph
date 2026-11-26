@@ -234,3 +234,10 @@ button.lnk { width: 100%; text-align: left; font: inherit; cursor: pointer; colo
 .ytbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 #colL .ytbtns .gbtn { font-size: 15px; line-height: 20px; padding: 9px 14px; box-sizing: border-box; text-decoration: none; display: inline-block; }
 #colL .gauges ~ section#ytp { padding-bottom: 10px; }
+
+/* ---------- open PDF ---------- */
+#askPdf { align-self: stretch; padding: 0 14px; font: 700 18px var(--head); color: var(--accent); background: rgba(92, 242, 255, .08); border: 1px solid rgba(92, 242, 255, .35); border-radius: 2px; cursor: pointer; }
+#pdfBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 2px; background: rgba(92, 242, 255, .08); }
+#pdfBar[hidden] { display: none; }
+#pdfBar .name { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 18px var(--head); }
+#pdfBar button { min-height: 44px; padding: 6px 14px; font: 600 17px var(--head); color: var(--accent); background: rgba(92, 242, 255, .1); border: 1px solid rgba(92, 242, 255, .45); border-radius: 2px; cursor: pointer; }
